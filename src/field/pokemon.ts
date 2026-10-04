@@ -138,6 +138,7 @@ import { loadMoveAnimations } from "#sprites/pokemon-asset-loader";
 import type { Variant } from "#sprites/variant";
 import { populateVariantColors, variantColorCache, variantData } from "#sprites/variant";
 import { achvs } from "#system/achv";
+import type { CoopSeat } from "#system/coop-session";
 import type { PokemonData } from "#system/pokemon-data";
 import { RibbonData } from "#system/ribbon-data";
 import { awardRibbonsToSpeciesLine } from "#system/ribbon-methods";
@@ -5981,6 +5982,9 @@ export abstract class Pokemon extends Phaser.GameObjects.Container {
 export class PlayerPokemon extends Pokemon {
   declare protected battleInfo: PlayerBattleInfo;
 
+  /** The co-op seat that owns this Pokemon. Always `0` outside co-op runs. */
+  public owner: CoopSeat = 0;
+
   constructor(
     species: PokemonSpecies,
     level: number,
@@ -5994,6 +5998,8 @@ export class PlayerPokemon extends Pokemon {
     dataSource?: Pokemon | PokemonData,
   ) {
     super(106, 148, species, level, abilityIndex, formIndex, gender, shiny, variant, ivs, nature, dataSource);
+
+    this.owner = (dataSource as { owner?: CoopSeat } | undefined)?.owner === 1 ? 1 : 0;
 
     if (activeOverrides.STATUS_OVERRIDE) {
       this.status = new Status(activeOverrides.STATUS_OVERRIDE, 0, 4, 4);

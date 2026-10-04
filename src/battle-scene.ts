@@ -108,6 +108,8 @@ import type { Variant } from "#sprites/variant";
 import { clearVariantData, variantData } from "#sprites/variant";
 import type { Achv } from "#system/achv";
 import { achvs, ModifierAchv, MoneyAchv } from "#system/achv";
+import type { CoopSeat } from "#system/coop-session";
+import { coopSession } from "#system/coop-session";
 import { GameData } from "#system/game-data";
 import { initGameSpeed } from "#system/game-speed";
 import type { PokemonData } from "#system/pokemon-data";
@@ -704,11 +706,12 @@ export class BattleScene extends SceneBase {
   }
 
   /**
+   * @param owner - If provided (co-op only), restrict the result to Pokemon owned by this seat
    * @returns An array of {@linkcode PlayerPokemon} filtered from the player's party
    * that are {@linkcode Pokemon.isAllowedInBattle | allowed in battle}.
    */
-  public getPokemonAllowedInBattle(): PlayerPokemon[] {
-    return this.getPlayerParty().filter(p => p.isAllowedInBattle());
+  public getPokemonAllowedInBattle(owner?: CoopSeat): PlayerPokemon[] {
+    return this.getPlayerParty().filter(p => p.isAllowedInBattle() && (owner === undefined || p.owner === owner));
   }
 
   /**
@@ -1495,6 +1498,11 @@ export class BattleScene extends SceneBase {
       || battleType === BattleType.MYSTERY_ENCOUNTER // MEs are never double battles
     ) {
       return false;
+    }
+
+    // Co-op: every remaining fight is a double so that both seats get a field slot
+    if (coopSession.enabled) {
+      return true;
     }
 
     if (forcedDouble != null) {

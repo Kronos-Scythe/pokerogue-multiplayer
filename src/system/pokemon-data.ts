@@ -14,10 +14,13 @@ import { TrainerSlot } from "#enums/trainer-slot";
 import { EnemyPokemon, Pokemon } from "#field/pokemon";
 import { PokemonMove } from "#moves/pokemon-move";
 import type { Variant } from "#sprites/variant";
+import type { CoopSeat } from "#system/coop-session";
 
 export class PokemonData {
   public id: number;
   public player: boolean;
+  /** The co-op seat that owns this Pokemon. Always `0` outside co-op runs. */
+  public owner: CoopSeat;
   public species: SpeciesId;
   public nickname: string;
   public formIndex: number;
@@ -81,6 +84,7 @@ export class PokemonData {
 
     this.id = source.id;
     this.player = sourcePokemon?.isPlayer() ?? source.player;
+    this.owner = source.owner === 1 ? 1 : 0;
     this.species = sourcePokemon?.species.speciesId ?? source.species;
     this.nickname = source.nickname;
     this.formIndex = Math.max(
