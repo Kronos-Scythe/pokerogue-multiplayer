@@ -56,6 +56,14 @@ export type CoopShopAction =
   | { kind: "transfer"; from: number; item: number; quantity: number; to: number }
   | { kind: "skip" };
 
+/**
+ * What the owner of a Pokemon decided when its move set was full: the move slot to replace (0-3), or -1 to not learn.
+ * Only the owner is asked, and the other client applies the same answer.
+ */
+export interface CoopLearnChoice {
+  slot: number;
+}
+
 const commandKey = (wave: number, turn: number, seat: CoopSeat) => `${wave}:${turn}:${seat}`;
 
 /**
@@ -80,6 +88,34 @@ class CoopSession {
 
   /** Called with each shop step this client takes; set by the network layer. */
   public sendShop: ((action: CoopShopAction) => void) | null = null;
+
+  /** Called with the answer to a "replace a move?" question this client's player gave; set by the network layer. */
+  public sendLearn: ((choice: CoopLearnChoice) => void) | null = null;
+
+  private readonly learnInbox: CoopLearnChoice[] = [];
+  private learnWaiter: ((choice: CoopLearnChoice) => void) | null = null;
+
+  /** Hand the other player's answer to a move-learning question to whoever is waiting for it (or keep it). */
+  public receiveLearn(choice: CoopLearnChoice): void {
+    if (this.learnWaiter) {
+      const waiter = this.learnWaiter;
+      this.learnWaiter = null;
+      waiter(choice);
+    } else {
+      this.learnInbox.push(choice);
+    }
+  }
+
+  /** Resolves with the next answer the other player gives to a move-learning question. */
+  public awaitLearn(): Promise<CoopLearnChoice> {
+    const early = this.learnInbox.shift();
+    if (early) {
+      return Promise.resolve(early);
+    }
+    return new Promise(resolve => {
+      this.learnWaiter = resolve;
+    });
+  }
 
   private readonly shopInbox: CoopShopAction[] = [];
   private shopWaiter: ((action: CoopShopAction) => void) | null = null;
@@ -156,6 +192,9 @@ class CoopSession {
     this.hotseat = false;
     this.send = null;
     this.sendShop = null;
+    this.sendLearn = null;
+    this.learnInbox.length = 0;
+    this.learnWaiter = null;
     this.shopInbox.length = 0;
     this.shopWaiter = null;
     this.inbox.clear();

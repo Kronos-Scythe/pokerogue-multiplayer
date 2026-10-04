@@ -41,6 +41,7 @@ Not done yet: the network layer (relay server and room codes, designed to work o
 
 ## Known open items
 
-- Two Eternatus at level 200 is a large difficulty spike for a 3+3 team. Balance still needs a pass.
+- **Move learning:** when a Pokemon with a full move set learns a move (level-up, TM, evolution), only its owner is asked what to forget. The answer is sent as a `learn` message and the other client applies it (`LearnMovePhase`).
+- **Balance (untested guess):** every boss loses one health segment in co-op (never below 2), so two bosses at once, including the two Eternatus, are less of a spike. The knob lives in `src/system/coop-balance.ts`. Enemy levels are unchanged and the numbers need real playtesting.
 - Mystery encounters with a fixed enemy list (for example Fight or Flight) put two player slots against that fixed
-  number of enemies.
+  number of enemies. That is easier for the players and is left as is.

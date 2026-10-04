@@ -108,6 +108,7 @@ import type { Variant } from "#sprites/variant";
 import { clearVariantData, variantData } from "#sprites/variant";
 import type { Achv } from "#system/achv";
 import { achvs, ModifierAchv, MoneyAchv } from "#system/achv";
+import { getCoopBossSegments } from "#system/coop-balance";
 import type { CoopSeat } from "#system/coop-session";
 import { coopSession } from "#system/coop-session";
 import { GameData } from "#system/game-data";
@@ -2011,7 +2012,7 @@ export class BattleScene extends SceneBase {
     }
     ret += Math.floor(waveIndex / 250);
 
-    return ret;
+    return getCoopBossSegments(ret);
   }
 
   trySpreadPokerus(): void {

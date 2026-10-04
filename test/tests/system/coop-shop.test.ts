@@ -203,4 +203,28 @@ describe("Co-op shop", () => {
     expect(game.scene.modifiers.length).toBe(before + 1);
     expect(sent).toContainEqual({ kind: "skip" });
   });
+
+  it("only lets a player pick their own Pokemon for items, TMs and fusions", async () => {
+    await start({ localSeat: 0, hotseat: true });
+    await winWave({ localSeat: 0 });
+    let filtered: (string | null)[] = [];
+    game.onNextPrompt(
+      "SelectModifierPhase",
+      UiMode.MODIFIER_SELECT,
+      () => {
+        const filter = currentShop().ownTeamFilter();
+        // slots 0 and 2 are ours (seat 0), slot 1 is the partner's
+        filtered = [0, 1, 2].map(i => filter(game.scene.getPlayerParty()[i]));
+        forceRewards(currentShop());
+        pickLocal(currentShop(), 0);
+        coopSession.receiveShop({ kind: "skip" });
+      },
+      undefined,
+    );
+    await game.phaseInterceptor.to("TurnInitPhase");
+
+    expect(filtered[0]).toBeNull();
+    expect(filtered[1]).toBe("Only your own team!");
+    expect(filtered[2]).toBeNull();
+  });
 });

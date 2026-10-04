@@ -12,6 +12,7 @@ import { UiMode } from "#enums/ui-mode";
 import type { Pokemon } from "#field/pokemon";
 import type { Move } from "#moves/move";
 import { PlayerPartyMemberPokemonPhase } from "#phases/player-party-member-pokemon-phase";
+import { coopSession } from "#system/coop-session";
 import type { ConfirmModeConfig } from "#types/ui-types";
 import { EvolutionSceneUiHandler } from "#ui/evolution-scene-ui-handler";
 import { SummaryUiMode } from "#ui/summary-ui-handler";
@@ -61,9 +62,42 @@ export class LearnMovePhase extends PlayerPartyMemberPokemonPhase {
     globalScene.ui.setMode(this.messageMode);
     if (currentMoveset.length < 4) {
       this.learnMove(currentMoveset.length, move, pokemon);
+    } else if (this.isPartnersPokemon(pokemon)) {
+      void this.followPartnersChoice(move, pokemon);
     } else {
       this.replaceMoveCheck(move, pokemon);
     }
+  }
+
+  /** Co-op: whether the Pokemon belongs to the player at the other client (so that player decides what it forgets). */
+  private isPartnersPokemon(pokemon: Pokemon): boolean {
+    return coopSession.enabled && !coopSession.hotseat && pokemon.isPlayer() && !coopSession.controls(pokemon.owner);
+  }
+
+  /** Co-op: tell the partner what the owner of this Pokemon decided (a move slot to replace, or -1 for none). */
+  private publishChoice(slot: number): void {
+    if (coopSession.enabled && !coopSession.hotseat) {
+      coopSession.sendLearn?.({ slot });
+    }
+  }
+
+  /** Co-op: wait for the owner to answer, then do the same here. */
+  private async followPartnersChoice(move: Move, pokemon: Pokemon): Promise<void> {
+    globalScene.ui.showText(
+      `${getPokemonNameWithAffix(pokemon)} wants to learn ${move.name}. Your partner is deciding...`,
+      0,
+    );
+    const { slot } = await coopSession.awaitLearn();
+    if (slot < 0 || slot > 3) {
+      await globalScene.ui.showTextPromise(
+        i18next.t("battle:learnMoveNotLearned", { pokemonName: getPokemonNameWithAffix(pokemon), moveName: move.name }),
+        undefined,
+        true,
+      );
+      this.end();
+      return;
+    }
+    this.learnMove(slot, move, pokemon);
   }
 
   /**
@@ -123,6 +157,7 @@ export class LearnMovePhase extends PlayerPartyMemberPokemonPhase {
           globalScene.ui.setMode(this.messageMode).then(() => this.rejectMoveAndEnd(move, pokemon));
           return;
         }
+        this.publishChoice(moveIndex);
         const forgetSuccessText = i18next.t("battle:learnMoveForgetSuccess", {
           pokemonName: getPokemonNameWithAffix(pokemon),
           moveName: pokemon.moveset[moveIndex]!.getName(),
@@ -154,6 +189,7 @@ export class LearnMovePhase extends PlayerPartyMemberPokemonPhase {
     if (!settings.general.levelMoveConfirmation) {
       await ui.setMode(this.messageMode);
       await ui.showTextPromise(i18next.t("battle:learnMoveNotLearned", { pokemonName, moveName }), undefined, true);
+      this.publishChoice(-1);
       this.end();
       return;
     }
@@ -162,6 +198,7 @@ export class LearnMovePhase extends PlayerPartyMemberPokemonPhase {
 
     const options: ConfirmModeConfig = {
       yesHandler: () => {
+        this.publishChoice(-1);
         ui.setMode(this.messageMode);
         ui.showTextPromise(i18next.t("battle:learnMoveNotLearned", { pokemonName, moveName }), undefined, true) //
           .then(() => this.end());

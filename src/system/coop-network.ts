@@ -1,4 +1,10 @@
-import { type CoopCommandMessage, type CoopSeat, type CoopShopAction, coopSession } from "#system/coop-session";
+import {
+  type CoopCommandMessage,
+  type CoopLearnChoice,
+  type CoopSeat,
+  type CoopShopAction,
+  coopSession,
+} from "#system/coop-session";
 import type { Starter } from "#types/save-data";
 import { randomString } from "#utils/common";
 
@@ -10,6 +16,7 @@ type Wire =
   | { type: "starters"; starters: CoopStarter[]; seed?: string }
   | { type: "command"; message: CoopCommandMessage }
   | { type: "shop"; action: CoopShopAction }
+  | { type: "learn"; choice: CoopLearnChoice }
   | { type: "sync"; wave: number; turn: number; state: string; rng: string };
 
 type RelayMessage =
@@ -101,6 +108,7 @@ class CoopNetwork {
           coopSession.start({ localSeat: options.role === "host" ? 0 : 1 });
           coopSession.send = message => this.sendWire({ type: "command", message });
           coopSession.sendShop = action => this.sendWire({ type: "shop", action });
+          coopSession.sendLearn = choice => this.sendWire({ type: "learn", choice });
           resolve(room);
         }
       };
@@ -166,6 +174,9 @@ class CoopNetwork {
         return;
       case "shop":
         coopSession.receiveShop(message.action);
+        return;
+      case "learn":
+        coopSession.receiveLearn(message.choice);
         return;
       case "sync":
         this.partnerStates.set(`${message.wave}:${message.turn}`, { state: message.state, rng: message.rng });
