@@ -21,6 +21,8 @@ import type { EndCardPhase } from "#phases/end-card-phase";
 import { achvs, ChallengeAchv } from "#system/achv";
 import { ArenaData } from "#system/arena-data";
 import { ChallengeData } from "#system/challenge-data";
+import { coopNetwork } from "#system/coop-network";
+import { coopSession } from "#system/coop-session";
 import { ModifierData as PersistentModifierData } from "#system/modifier-data";
 import { PokemonData } from "#system/pokemon-data";
 import { RibbonData, type RibbonFlag } from "#system/ribbon-data";
@@ -68,6 +70,12 @@ export class GameOverPhase extends BattlePhase {
       return;
     }
     // Otherwise, continue standard Game Over logic
+
+    // Co-op runs are not saved and earn no unlocks, so they skip straight back to the title screen
+    if (coopSession.enabled) {
+      this.handleCoopGameOver();
+      return;
+    }
 
     if (this.isVictory && globalScene.gameMode.isEndless) {
       const genderIndex = settings.general.playerGender;
@@ -176,6 +184,30 @@ export class GameOverPhase extends BattlePhase {
         awardRibbonsToSpeciesLine(species.speciesId, ribbonFlags as RibbonFlag);
       }
     }
+  }
+
+  /** Co-op: say how the run ended, drop the connection and go back to the title screen. */
+  private handleCoopGameOver(): void {
+    globalScene.phaseManager.hideAbilityBar();
+    const text = this.isVictory
+      ? "You beat the run together! Well played."
+      : "Both teams were wiped out. The run is over.";
+    globalScene.ui.showText(
+      text,
+      null,
+      () => {
+        coopNetwork.disconnect();
+        coopSession.reset();
+        globalScene.ui.fadeOut(500).then(() => {
+          globalScene.phaseManager.clearPhaseQueue();
+          globalScene.ui.clearText();
+          globalScene.reset();
+          globalScene.phaseManager.unshiftNew("TitlePhase");
+          this.end();
+        });
+      },
+      3000,
+    );
   }
 
   handleGameOver(): void {

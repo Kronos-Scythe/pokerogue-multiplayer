@@ -298,16 +298,21 @@ export class EncounterPhase extends BattlePhase {
           this.trySetWeatherIfNewBiome();
           this.trySetTerrainIfNewBiome();
           // Game syncs to server on waves X1 and X6 (As of 1.2.0)
-          globalScene.gameData
-            .saveAll(true, battle.waveIndex % 5 === 1 || (globalScene.lastSavePlayTime ?? 0) >= 300)
-            .then(success => {
-              globalScene.disableMenu = false;
-              if (!success) {
-                return globalScene.reset(true);
-              }
-              this.doEncounter();
-              globalScene.resetSeed();
-            });
+          // Co-op runs are never saved
+          (coopSession.enabled
+            ? Promise.resolve(true)
+            : globalScene.gameData.saveAll(
+                true,
+                battle.waveIndex % 5 === 1 || (globalScene.lastSavePlayTime ?? 0) >= 300,
+              )
+          ).then(success => {
+            globalScene.disableMenu = false;
+            if (!success) {
+              return globalScene.reset(true);
+            }
+            this.doEncounter();
+            globalScene.resetSeed();
+          });
         }
       });
     });

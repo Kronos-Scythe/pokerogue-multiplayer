@@ -19,6 +19,9 @@ import { Unlockables } from "#enums/unlockables";
 import { getBiomeKey } from "#field/arena";
 import type { Modifier } from "#modifiers/modifier";
 import { getDailyRunStarterModifiers, regenerateModifierPoolThresholds } from "#modifiers/modifier-type";
+import { coopNetwork } from "#system/coop-network";
+import { coopSession } from "#system/coop-session";
+import { type CoopUrlConfig, parseCoopUrl } from "#system/coop-url";
 import { vouchers } from "#system/voucher";
 import type { OptionSelectItem, OptionSelectModeConfig } from "#types/ui-types";
 import { SaveSlotUiMode } from "#ui/save-slot-select-ui-handler";
@@ -88,6 +91,17 @@ export class TitlePhase extends Phase {
         label: i18next.t("continue", { ns: "menu" }),
         handler: () => {
           this.loadSaveSlot(lastSessionSlot);
+          return true;
+        },
+      });
+    }
+    // Co-op is offered when the page address asks for it (?coop=host or ?coop=join&room=CODE)
+    const coopConfig = typeof window === "undefined" ? null : parseCoopUrl(window.location.search, window.location);
+    if (coopConfig) {
+      options.push({
+        label: coopConfig.role === "host" ? "Co-op: host a room" : `Co-op: join room ${coopConfig.room}`,
+        handler: () => {
+          this.startCoop(coopConfig);
           return true;
         },
       });
@@ -190,6 +204,45 @@ export class TitlePhase extends Phase {
     );
     const config: OptionSelectModeConfig = { options, blockCancelButton: true };
     await ui.setMode(UiMode.TITLE, config);
+  }
+
+  /** Connect to the relay and the partner, then go on to picking starters. */
+  private startCoop(config: CoopUrlConfig): void {
+    const { ui } = globalScene;
+    ui.setMode(UiMode.MESSAGE);
+    ui.clearText();
+    ui.showText("Connecting to the relay server...", 0);
+    coopNetwork.onStatus = text => ui.showText(text, 0);
+    coopNetwork.onPartnerLeft = () => {
+      ui.setMode(UiMode.MESSAGE).then(() =>
+        ui.showText("Your partner left the game. Reload the page to start a new run.", 0),
+      );
+    };
+    coopNetwork.onDesync = (wave, turn) => {
+      console.error(`Co-op desync at wave ${wave}, turn ${turn}`);
+      globalScene.phaseManager.queueMessage(
+        `Warning: the two games have gone out of sync (wave ${wave}, turn ${turn}). Things may look different on your partner's screen.`,
+      );
+    };
+    coopNetwork
+      .connect({ server: config.server, role: config.role, room: config.room })
+      .then(() => {
+        ui.clearText();
+        this.gameMode = GameModes.CLASSIC;
+        this.end();
+      })
+      .catch((err: Error) => {
+        coopSession.reset();
+        ui.showText(
+          `${err.message} Back to the title screen...`,
+          null,
+          () => {
+            globalScene.phaseManager.toTitleScreen();
+            super.end();
+          },
+          2500,
+        );
+      });
   }
 
   // TODO: Make callers actually wait for the save slot to load

@@ -87,9 +87,11 @@ describe("Co-op special waves", () => {
     // Boss phase 2
     game.move.use(MoveId.ICE_BEAM, 0, BattlerIndex.ENEMY);
     game.move.use(MoveId.ICE_BEAM, 1, BattlerIndex.ENEMY_2);
-    await game.phaseInterceptor.to("PostGameOverPhase", false);
+    // Co-op runs are not saved, so the victory ends in GameOverPhase itself (it goes back to the title screen)
+    await game.phaseInterceptor.to("GameOverPhase", false);
 
-    expect(game.phaseInterceptor.phaseLog.includes("GameOverPhase")).toBe(true);
+    const phase = game.scene.phaseManager.getCurrentPhase() as unknown as { isVictory: boolean };
+    expect(phase.isVictory).toBe(true);
   });
 
   describe("mystery encounters", () => {

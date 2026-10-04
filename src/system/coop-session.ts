@@ -7,6 +7,11 @@ export type CoopSeat = 0 | 1;
 /** How many Pokemon each seat brings to a co-op run. */
 export const COOP_TEAM_SIZE = 3;
 
+/** The most starters one player may pick: their share of the team in co-op, a full party otherwise. */
+export function getStarterLimit(fullParty: number): number {
+  return coopSession.enabled ? COOP_TEAM_SIZE : fullParty;
+}
+
 /**
  * One seat's command for one turn, as sent to the other client.
  * Plain numbers and booleans only so it can go over the wire as JSON.

@@ -27,6 +27,7 @@ ls:
 ignore:
    - .pnpm-store
    - node_modules
+   - server/node_modules
    - .vscode
    - .github
    - .git

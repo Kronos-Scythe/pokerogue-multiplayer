@@ -316,6 +316,17 @@
     }
   },
   "overrides": [
+    // The relay server is a standalone Node package with its own `node --test` tests (it has no vitest)
+    {
+      "includes": ["**/server/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    },
     {
       "includes": ["**/src/ai/**/*.ts"],
       "linter": {

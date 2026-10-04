@@ -8,6 +8,8 @@ import { Gender } from "#data/gender";
 import { ChallengeType } from "#enums/challenge-type";
 import { UiMode } from "#enums/ui-mode";
 import { overrideHeldItems, overrideModifiers } from "#modifiers/modifier";
+import { type CoopStarter, coopNetwork } from "#system/coop-network";
+import { type CoopSeat, coopSession } from "#system/coop-session";
 import type { Starter } from "#types/save-data";
 import { SaveSlotUiMode } from "#ui/save-slot-select-ui-handler";
 import { applyChallenges } from "#utils/challenge-utils";
@@ -21,6 +23,10 @@ export class SelectStarterPhase extends Phase {
 
     globalScene.ui.setMode(UiMode.STARTER_SELECT, (starters: Starter[]) => {
       globalScene.ui.clearText();
+      if (coopSession.enabled && coopNetwork.connected) {
+        this.startCoopRun(starters);
+        return;
+      }
       globalScene.ui.setMode(UiMode.SAVE_SLOT, SaveSlotUiMode.SAVE, (slotId: number) => {
         // If clicking cancel, back out to title screen
         if (slotId === -1) {
@@ -35,10 +41,34 @@ export class SelectStarterPhase extends Phase {
   }
 
   /**
+   * Co-op: swap teams with the partner, then start the run with both teams and a shared seed.
+   * Co-op runs are never saved, so the save slot screen is skipped.
+   */
+  private startCoopRun(starters: Starter[]): void {
+    const mine: CoopStarter[] = starters.map(starter => ({
+      ...starter,
+      luck: globalScene.gameData.getDexAttrLuck(globalScene.gameData.dexData[starter.speciesId].caughtAttr),
+    }));
+    globalScene.ui.setMode(UiMode.MESSAGE);
+    globalScene.ui.showText("Waiting for your partner to pick their team...", 0);
+    coopNetwork.exchangeStarters(mine).then(setup => {
+      globalScene.ui.clearText();
+      // Both games roll the same dice from here on
+      globalScene.setSeed(setup.seed);
+      globalScene.resetSeed();
+      this.initBattle(setup.starters, {
+        owners: setup.owners,
+        lucks: setup.starters.map(s => s.luck),
+      });
+    });
+  }
+
+  /**
    * Initialize starters before starting the first battle
    * @param starters - Array of {@linkcode Starter}s with which to start the battle
+   * @param coop - In co-op, who owns each starter and how lucky it is (luck comes from its owner's save)
    */
-  initBattle(starters: Starter[]) {
+  initBattle(starters: Starter[], coop?: { owners: CoopSeat[]; lucks: number[] }) {
     const party = globalScene.getPlayerParty();
     const loadPokemonAssets: Promise<void>[] = [];
     starters.forEach((starter: Starter, i: number) => {
@@ -77,9 +107,12 @@ export class SelectStarterPhase extends Phase {
       if (starter.passive) {
         starterPokemon.passive = true;
       }
-      starterPokemon.luck = globalScene.gameData.getDexAttrLuck(
-        globalScene.gameData.dexData[species.speciesId].caughtAttr,
-      );
+      starterPokemon.luck =
+        coop?.lucks[i]
+        ?? globalScene.gameData.getDexAttrLuck(globalScene.gameData.dexData[species.speciesId].caughtAttr);
+      if (coop) {
+        starterPokemon.owner = coop.owners[i];
+      }
       if (starter.pokerus) {
         starterPokemon.pokerus = true;
       }

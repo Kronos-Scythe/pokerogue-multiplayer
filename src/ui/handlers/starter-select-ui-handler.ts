@@ -38,6 +38,7 @@ import { UiMode } from "#enums/ui-mode";
 import type { Variant } from "#sprites/variant";
 import { getVariantIcon, getVariantTint } from "#sprites/variant";
 import { achvs } from "#system/achv";
+import { getStarterLimit } from "#system/coop-session";
 import { RibbonData } from "#system/ribbons/ribbon-data";
 import type { SettingsUpdateEventArgs } from "#types/event-bus-types";
 import type {
@@ -1067,7 +1068,7 @@ export class StarterSelectUiHandler extends MessageUiHandler {
         // This prevents repeated rapid button presses from adding duplicate starters to the party
         this.blockInput = true;
 
-        if (this.partyStarterIds.length >= 6) {
+        if (this.partyStarterIds.length >= getStarterLimit(6)) {
           this.blockInput = false;
           error = true;
           break;
@@ -1597,7 +1598,7 @@ export class StarterSelectUiHandler extends MessageUiHandler {
       !isDupe
       && isValidForChallenge
       && currentPartyValue + newCost <= getRunValueLimit()
-      && this.partyStarterIds.length < PLAYER_PARTY_MAX_SIZE
+      && this.partyStarterIds.length < getStarterLimit(PLAYER_PARTY_MAX_SIZE)
     ) {
       options.push({
         label: i18next.t("starterSelectUiHandler:addToParty"),

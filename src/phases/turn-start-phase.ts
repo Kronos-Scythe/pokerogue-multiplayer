@@ -9,6 +9,9 @@ import type { Pokemon } from "#field/pokemon";
 import { BypassSpeedChanceModifier } from "#modifiers/modifier";
 import { PokemonMove } from "#moves/pokemon-move";
 import { FieldPhase } from "#phases/field-phase";
+import { coopNetwork } from "#system/coop-network";
+import { coopSession } from "#system/coop-session";
+import { computeCoopStateHash } from "#system/coop-sync";
 import { inSpeedOrder } from "#utils/speed-order-generator";
 
 export class TurnStartPhase extends FieldPhase {
@@ -50,6 +53,12 @@ export class TurnStartPhase extends FieldPhase {
   // Also need a clearer distinction between "turn command" and queued moves
   start() {
     super.start();
+
+    // Co-op: tell the partner's game what ours looks like now, so a drift is noticed as soon as it happens
+    if (coopSession.enabled && coopNetwork.connected) {
+      const { state, rng } = computeCoopStateHash();
+      coopNetwork.reportState(globalScene.currentBattle.waveIndex, globalScene.currentBattle.turn, state, rng);
+    }
 
     const field = globalScene.getField();
     const moveOrder = this.getCommandOrder();

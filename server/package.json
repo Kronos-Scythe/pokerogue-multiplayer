@@ -1,0 +1,14 @@
+{
+  "name": "pokerogue-coop-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tiny WebSocket relay that pairs two PokeRogue co-op clients by room code",
+  "scripts": {
+    "start": "node index.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
