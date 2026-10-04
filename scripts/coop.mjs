@@ -27,8 +27,13 @@ const children = [
     stdio: "inherit",
     env: { ...process.env, PORT: relayPort },
   }),
-  // --host lets other computers (a friend over a VPN or LAN) open the page
-  spawn("pnpm", ["exec", "vite", "--mode", "development", "--host"], { cwd: root, stdio: "inherit", shell: isWindows }),
+  // --host lets other computers (a friend over a VPN or LAN) open the page; --strictPort stops Vite from quietly
+  // moving to another port (the friend would then be knocking on the wrong one)
+  spawn("pnpm", ["exec", "vite", "--mode", "development", "--host", "--strictPort"], {
+    cwd: root,
+    stdio: "inherit",
+    shell: isWindows,
+  }),
 ];
 
 const stopAll = () => {
@@ -66,5 +71,13 @@ setTimeout(() => {
   }
   console.log("[coop] Use the address that matches your VPN (for example Radmin/Hamachi/Tailscale).");
   console.log("[coop] The relay is on port " + relayPort + "; allow it and the game port through the firewall.");
+  if (isWindows) {
+    console.log(
+      "[coop] If your friend's page loads forever, Windows Firewall is blocking it. In PowerShell as Administrator:",
+    );
+    console.log(
+      `[coop]   New-NetFirewallRule -DisplayName "PokeRogue co-op" -Direction Inbound -Protocol TCP -LocalPort 8000,${relayPort} -Action Allow -Profile Any`,
+    );
+  }
   console.log("[coop] =======================================================\n");
 }, 4000);

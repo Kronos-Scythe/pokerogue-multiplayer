@@ -36,6 +36,22 @@ same machine as the page, on port 8787. A page served over `https` can only use 
 Pick **Co-op** in the title menu on both sides. Each player then picks 3 starters; the run starts once both have
 confirmed. The host is seat 0 and the guest is seat 1.
 
+## If the page loads forever for your friend
+
+That is almost always the host's firewall dropping the connection (a browser waits on a connection that never answers).
+The host needs both the game page (port 8000) and the relay (port 8787) reachable:
+
+1. Start with `pnpm coop` (it makes the page reachable from other computers). `pnpm start:dev` alone only serves
+   `localhost`.
+2. In PowerShell **as Administrator**, allow both ports on every network profile (Radmin and similar VPN adapters are
+   often treated as "Public" networks, which Windows blocks by default):
+   `New-NetFirewallRule -DisplayName "PokeRogue co-op" -Direction Inbound -Protocol TCP -LocalPort 8000,8787 -Action Allow -Profile Any`
+3. From the friend's computer check the ports: `Test-NetConnection <host's VPN address> -Port 8000` (and `-Port 8787`)
+   should say `TcpTestSucceeded : True`. If it does not, it is the firewall or the wrong address.
+4. The friend must use the host's address on the VPN (for Radmin it starts with `26.`), not `localhost`.
+
+The first load over a VPN is slow (the dev server sends many small files), so give it a minute before deciding it hangs.
+
 ## Things to know
 
 - Co-op runs are never saved to a slot, and earn no unlocks.
