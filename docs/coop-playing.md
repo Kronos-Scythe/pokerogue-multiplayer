@@ -41,3 +41,12 @@ confirmed. The host is seat 0 and the guest is seat 1.
 - Co-op runs are never saved, and earn no unlocks.
 - Ball and Run are disabled.
 - If the two games ever disagree, a warning is shown (check the browser console for the wave and turn).
+
+## Profiles
+
+Without an account, the game keeps its saves, Pokedex and unlocks in the browser, under a profile name. The default is
+`Guest`. Add `?profile=Nickname` to the page address to play as another profile (for example
+`http://localhost:8000/?profile=Matheus`); the browser remembers the choice, so later visits keep using it. Each
+profile is separate, and the title screen shows "Logged in as: Nickname". Saves belong to the browser and the page
+address (`localhost` and an IP address are different), so a friend on another computer has his own profile and
+Pokedex. Co-op runs are never saved.

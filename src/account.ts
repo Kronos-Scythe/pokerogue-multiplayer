@@ -1,5 +1,6 @@
 import { pokerogueApi } from "#api/api";
 import { bypassLogin } from "#constants/app-constants";
+import { getLocalProfileName } from "#system/local-profile";
 import type { UserInfo } from "#types/api";
 import { randomString } from "#utils/common";
 
@@ -20,7 +21,8 @@ export async function updateUserInfo(): Promise<[success: boolean, status: numbe
   }
 
   loggedInUser = {
-    username: "Guest",
+    // Offline play: a local profile picked with ?profile=Nickname (default "Guest")
+    username: typeof window === "undefined" ? "Guest" : getLocalProfileName(window.location.search, localStorage),
     lastSessionSlot: -1,
     discordId: "",
     googleId: "",
