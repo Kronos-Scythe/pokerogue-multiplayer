@@ -1,12 +1,13 @@
 import { type CoopSocket, type CoopStarter, coopNetwork } from "#system/coop-network";
 import { coopSession } from "#system/coop-session";
+import { coopSnapshot } from "#system/coop-snapshot";
 import { hashText } from "#system/coop-sync";
 import { getCoopTitleConfigs, parseCoopUrl } from "#system/coop-url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** A stand-in for the relay server: the same room rules, no sockets */
 class FakeRelay {
-  rooms = new Map<string, { host: FakeSocket; guest?: FakeSocket }>();
+  rooms = new Map<string, { host?: FakeSocket | undefined; guest?: FakeSocket | undefined; resumable: boolean }>();
 
   connect(): FakeSocket {
     const socket = new FakeSocket(this);
@@ -18,13 +19,28 @@ class FakeRelay {
     return socket;
   }
 
+  /** The connection of one player breaks without them saying goodbye */
+  drop(socket: FakeSocket) {
+    socket.readyState = 3;
+    const entry = this.rooms.get(socket.room!);
+    if (entry?.resumable) {
+      const role = entry.host === socket ? "host" : "guest";
+      entry[role] = undefined;
+      (role === "host" ? entry.guest : entry.host)?.receive({ type: "peer-away" });
+      socket.room = undefined;
+    } else {
+      this.leave(socket);
+    }
+    socket.onclose?.();
+  }
+
   /** Like the real relay: when one player goes, the other is told */
   leave(socket: FakeSocket) {
     for (const entry of this.rooms.values()) {
       if (entry.host === socket) {
         entry.guest?.receive({ type: "peer-left" });
       } else if (entry.guest === socket) {
-        entry.host.receive({ type: "peer-left" });
+        entry.host?.receive({ type: "peer-left" });
       }
     }
   }
@@ -33,9 +49,9 @@ class FakeRelay {
     const message = JSON.parse(text);
     if (message.type === "host") {
       const room = message.room ?? "ABCD";
-      this.rooms.set(room, { host: from });
+      this.rooms.set(room, { host: from, resumable: false });
       from.room = room;
-      from.receive({ type: "hosted", room });
+      from.receive({ type: "hosted", room, token: `host-${room}` });
     } else if (message.type === "join") {
       const entry = this.rooms.get(message.room);
       if (!entry) {
@@ -44,8 +60,25 @@ class FakeRelay {
       }
       entry.guest = from;
       from.room = message.room;
-      from.receive({ type: "joined", room: message.room });
-      entry.host.receive({ type: "peer-joined" });
+      from.receive({ type: "joined", room: message.room, token: `guest-${message.room}` });
+      entry.host?.receive({ type: "peer-joined" });
+    } else if (message.type === "resumable") {
+      this.rooms.get(from.room!)!.resumable = true;
+    } else if (message.type === "rejoin") {
+      const entry = this.rooms.get(message.room);
+      const role =
+        message.token === `host-${message.room}` ? "host" : message.token === `guest-${message.room}` ? "guest" : null;
+      if (!entry || !role) {
+        from.receive({ type: "error", message: "Could not rejoin that room." });
+        return;
+      }
+      entry[role] = from;
+      from.room = message.room;
+      from.receive({ type: "rejoined", room: message.room });
+      (role === "host" ? entry.guest : entry.host)?.receive({ type: "peer-back" });
+    } else if (message.type === "leave") {
+      this.leave(from);
+      from.room = undefined;
     } else {
       const entry = this.rooms.get(from.room!);
       (entry?.host === from ? entry.guest : entry?.host)?.receive(message);
@@ -55,7 +88,7 @@ class FakeRelay {
 
 class FakeSocket implements CoopSocket {
   readyState = 0;
-  room?: string;
+  room?: string | undefined;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onclose: (() => void) | null = null;
@@ -66,7 +99,9 @@ class FakeSocket implements CoopSocket {
   }
   close() {
     this.readyState = 3;
-    this.relay.leave(this);
+    if (this.room) {
+      this.relay.leave(this);
+    }
   }
   receive(message: object) {
     setTimeout(() => this.onmessage?.({ data: JSON.stringify(message) }), 0);
@@ -222,5 +257,103 @@ describe("co-op connection", () => {
     await new Promise(resolve => setTimeout(resolve, 20));
 
     expect(problems).toEqual(["3:2:battle state", "3:3:random numbers"]);
+  });
+
+  describe("a run under way", () => {
+    const wait = (ms = 30) => new Promise(resolve => setTimeout(resolve, ms));
+
+    async function startRun(room: string) {
+      const hosting = host.connect({ server: "ws://relay", role: "host", room });
+      await wait(20);
+      await Promise.all([hosting, guest.connect({ server: "ws://relay", role: "join", room })]);
+      host.markRunStarted();
+      guest.markRunStarted();
+      coopSnapshot.latest = "the wave start";
+      coopSnapshot.wave = 4;
+      host.reconnectDelayMs = 5;
+      guest.reconnectDelayMs = 5;
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      host.onResync = null;
+      guest.onResync = null;
+    });
+
+    it("gets a dropped connection back, then the host sends the start of the wave to both games", async () => {
+      await startRun("DROP");
+      const events: string[] = [];
+      const resyncs: string[] = [];
+      guest.onReconnecting = () => events.push("guest reconnecting");
+      guest.onReconnected = () => events.push("guest reconnected");
+      host.onPartnerAway = () => events.push("host sees partner away");
+      host.onPartnerBack = () => events.push("host sees partner back");
+      host.onPartnerLeft = () => events.push("host lost partner for good");
+      host.onResync = session => resyncs.push(`host:${session}`);
+      guest.onResync = session => resyncs.push(`guest:${session}`);
+
+      relay.drop((guest as any).socket);
+      await wait(100);
+
+      expect(events).toEqual([
+        "guest reconnecting",
+        "host sees partner away",
+        "guest reconnected",
+        "host sees partner back",
+      ]);
+      expect(resyncs.sort()).toEqual(["guest:the wave start", "host:the wave start"]);
+      expect(guest.connected).toBe(true);
+    });
+
+    it("ends the run when the room is gone, and when a player was never in a started run", async () => {
+      await startRun("GONE");
+      let left = 0;
+      guest.onPartnerLeft = () => left++;
+      relay.rooms.clear();
+      relay.drop((guest as any).socket);
+      await wait(100);
+      expect(left).toBe(1);
+    });
+
+    it("ignores what the other game sent before it went back to the snapshot", async () => {
+      await startRun("STALE");
+      const received = vi.spyOn(coopSession, "receive");
+      host.onResync = () => {};
+      guest.onResync = () => {};
+      expect(host.requestResync()).toBe(true);
+      await wait();
+      // the guest is still catching up: a command from before the rewind is stale
+      (guest as any).handle(
+        { type: "command", message: { wave: 4, turn: 3, seat: 0, command: 1, cursor: 0 } },
+        () => {},
+        () => {},
+        "join",
+      );
+      expect(received).not.toHaveBeenCalled();
+
+      host.finishResync();
+      await wait();
+      (guest as any).handle(
+        { type: "command", message: { wave: 4, turn: 1, seat: 0, command: 1, cursor: 0 } },
+        () => {},
+        () => {},
+        "join",
+      );
+      expect(received).toHaveBeenCalledTimes(1);
+    });
+
+    it("rewinds the same wave only a few times, so a problem that keeps coming back cannot loop forever", async () => {
+      await startRun("LOOP");
+      host.onResync = () => {};
+      guest.onResync = () => {};
+      const results: boolean[] = [];
+      for (let i = 0; i < 5; i++) {
+        results.push(host.requestResync());
+        host.finishResync();
+        guest.finishResync();
+        await wait();
+      }
+      expect(results).toEqual([true, true, true, false, false]);
+    });
   });
 });

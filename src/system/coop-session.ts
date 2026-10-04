@@ -49,18 +49,18 @@ export interface CoopPickTarget {
 
 /** One step of a player's turn in the shop, as sent to the other client. */
 export type CoopShopAction =
-  | { kind: "reward"; cursor: number; target?: CoopPickTarget | undefined }
+  | { kind: "reward"; cursor: number; target?: CoopPickTarget | undefined; epoch?: number | undefined }
   | { kind: "buy"; rowCursor: number; cursor: number; target?: CoopPickTarget | undefined }
-  | { kind: "reroll" }
+  | { kind: "reroll"; epoch?: number | undefined }
   | { kind: "lock" }
   | { kind: "transfer"; from: number; item: number; quantity: number; to: number }
-  | { kind: "skip" };
+  | { kind: "skip"; epoch?: number | undefined };
 
 /**
  * What the owner of a Pokemon decided when its move set was full: the move slot to replace (0-3), or -1 to not learn.
  * Only the owner is asked, and the other client applies the same answer.
  */
-export interface CoopLearnChoice {
+export interface CoopChoice {
   slot: number;
 }
 
@@ -90,30 +90,30 @@ class CoopSession {
   public sendShop: ((action: CoopShopAction) => void) | null = null;
 
   /** Called with the answer to a "replace a move?" question this client's player gave; set by the network layer. */
-  public sendLearn: ((choice: CoopLearnChoice) => void) | null = null;
+  public sendChoice: ((choice: CoopChoice) => void) | null = null;
 
-  private readonly learnInbox: CoopLearnChoice[] = [];
-  private learnWaiter: ((choice: CoopLearnChoice) => void) | null = null;
+  private readonly choiceInbox: CoopChoice[] = [];
+  private choiceWaiter: ((choice: CoopChoice) => void) | null = null;
 
   /** Hand the other player's answer to a move-learning question to whoever is waiting for it (or keep it). */
-  public receiveLearn(choice: CoopLearnChoice): void {
-    if (this.learnWaiter) {
-      const waiter = this.learnWaiter;
-      this.learnWaiter = null;
+  public receiveChoice(choice: CoopChoice): void {
+    if (this.choiceWaiter) {
+      const waiter = this.choiceWaiter;
+      this.choiceWaiter = null;
       waiter(choice);
     } else {
-      this.learnInbox.push(choice);
+      this.choiceInbox.push(choice);
     }
   }
 
   /** Resolves with the next answer the other player gives to a move-learning question. */
-  public awaitLearn(): Promise<CoopLearnChoice> {
-    const early = this.learnInbox.shift();
+  public awaitChoice(): Promise<CoopChoice> {
+    const early = this.choiceInbox.shift();
     if (early) {
       return Promise.resolve(early);
     }
     return new Promise(resolve => {
-      this.learnWaiter = resolve;
+      this.choiceWaiter = resolve;
     });
   }
 
@@ -185,6 +185,16 @@ class CoopSession {
     this.hotseat = hotseat;
   }
 
+  /** Forget every message that is waiting to be used or waiting for one (after the game was rewound to a snapshot). */
+  public clearPending(): void {
+    this.inbox.clear();
+    this.waiting.clear();
+    this.shopInbox.length = 0;
+    this.shopWaiter = null;
+    this.choiceInbox.length = 0;
+    this.choiceWaiter = null;
+  }
+
   /** Return to normal single-player behavior. */
   public reset(): void {
     this.enabled = false;
@@ -192,9 +202,9 @@ class CoopSession {
     this.hotseat = false;
     this.send = null;
     this.sendShop = null;
-    this.sendLearn = null;
-    this.learnInbox.length = 0;
-    this.learnWaiter = null;
+    this.sendChoice = null;
+    this.choiceInbox.length = 0;
+    this.choiceWaiter = null;
     this.shopInbox.length = 0;
     this.shopWaiter = null;
     this.inbox.clear();

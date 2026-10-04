@@ -88,6 +88,11 @@ export class CommandPhase extends FieldPhase {
       return;
     }
 
+    // Co-op: each seat decides for its own Pokemon, so a ball or run does not use up the partner's turn
+    if (coopSession.enabled) {
+      return;
+    }
+
     const allyCommand = globalScene.currentBattle.turnCommands[this.fieldIndex - 1];
     if (allyCommand?.command === Command.BALL || allyCommand?.command === Command.RUN) {
       globalScene.currentBattle.turnCommands[this.fieldIndex] = {
@@ -487,7 +492,7 @@ export class CommandPhase extends FieldPhase {
         cursor,
       };
       globalScene.currentBattle.turnCommands[this.fieldIndex]!.targets = targets;
-      if (this.fieldIndex) {
+      if (this.fieldIndex && !coopSession.enabled) {
         globalScene.currentBattle.turnCommands[this.fieldIndex - 1]!.skip = true;
       }
       return true;
@@ -589,7 +594,7 @@ export class CommandPhase extends FieldPhase {
         : {
             command: Command.RUN,
           };
-      if (!this.isSwitch && this.fieldIndex) {
+      if (!this.isSwitch && this.fieldIndex && !coopSession.enabled) {
         currentBattle.turnCommands[this.fieldIndex - 1]!.skip = true;
       }
       return true;
@@ -678,12 +683,6 @@ export class CommandPhase extends FieldPhase {
     move?: TurnMove,
   ): boolean {
     let success = false;
-
-    // Co-op: one seat's ball or run would also have to cancel the other seat's command, so they are unavailable
-    if (coopSession.enabled && (command === Command.BALL || command === Command.RUN)) {
-      this.queueShowRawText("That isn't available in co-op.");
-      return false;
-    }
 
     switch (command) {
       case Command.TERA:

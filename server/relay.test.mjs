@@ -15,6 +15,8 @@ describe("co-op relay", () => {
 
   after(() => relay.close());
 
+  const withoutToken = ({ token: _token, ...rest }) => rest;
+
   /** Open a socket that collects everything it receives */
   async function client() {
     const socket = new WebSocket(url);
@@ -42,11 +44,12 @@ describe("co-op relay", () => {
     const guest = await client();
 
     host.send({ type: "host" });
-    const { room } = await host.next();
+    const { room, token } = await host.next();
+    assert.ok(token);
     assert.match(room, /^[A-Z2-9]{4}$/);
 
     guest.send({ type: "join", room: room.toLowerCase() });
-    assert.deepEqual(await guest.next(), { type: "joined", room });
+    assert.deepEqual(withoutToken(await guest.next()), { type: "joined", room });
     assert.deepEqual(await host.next(), { type: "peer-joined" });
 
     host.send({ type: "command", n: 1 });
@@ -65,13 +68,13 @@ describe("co-op relay", () => {
 
     const guest = await client();
     guest.send({ type: "join" });
-    assert.deepEqual(await guest.next(), { type: "joined", room: "FIRSTROOM" });
+    assert.deepEqual(withoutToken(await guest.next()), { type: "joined", room: "FIRSTROOM" });
     assert.deepEqual(await first.next(), { type: "peer-joined" });
 
     // that room is full now, so the next guest without a code gets the other one
     const another = await client();
     another.send({ type: "join" });
-    assert.deepEqual(await another.next(), { type: "joined", room: "SECONDROOM" });
+    assert.deepEqual(withoutToken(await another.next()), { type: "joined", room: "SECONDROOM" });
   });
 
   it("says so when there is nobody to join", async () => {
@@ -120,5 +123,87 @@ describe("co-op relay", () => {
     const stray = await client();
     stray.send({ type: "command" });
     assert.equal((await stray.next()).type, "error");
+  });
+
+  describe("a running game", () => {
+    let shortRelay;
+    let shortUrl;
+
+    before(async () => {
+      shortRelay = createRelay({ port: 0, host: "127.0.0.1", graceMs: 300 });
+      await new Promise(resolve => shortRelay.wss.on("listening", resolve));
+      shortUrl = `ws://127.0.0.1:${shortRelay.wss.address().port}`;
+    });
+
+    after(() => shortRelay.close());
+
+    async function pair(code) {
+      const open = async () => {
+        const socket = new WebSocket(shortUrl);
+        const inbox = [];
+        const waiting = [];
+        socket.on("message", raw => {
+          const message = JSON.parse(raw.toString());
+          const waiter = waiting.shift();
+          if (waiter) {
+            waiter(message);
+          } else {
+            inbox.push(message);
+          }
+        });
+        await new Promise(resolve => socket.on("open", resolve));
+        return {
+          socket,
+          send: message => socket.send(JSON.stringify(message)),
+          next: () =>
+            inbox.length > 0 ? Promise.resolve(inbox.shift()) : new Promise(resolve => waiting.push(resolve)),
+        };
+      };
+      const host = await open();
+      const guest = await open();
+      host.send({ type: "host", room: code });
+      const hostToken = (await host.next()).token;
+      guest.send({ type: "join", room: code });
+      const guestToken = (await guest.next()).token;
+      await host.next();
+      host.send({ type: "resumable" });
+      guest.send({ type: "resumable" });
+      return { host, guest, hostToken, guestToken, open };
+    }
+
+    it("lets a player whose connection dropped come back with their token", async () => {
+      const { host, guest, guestToken, open } = await pair("COMEBACK");
+      guest.socket.terminate();
+      assert.deepEqual(await host.next(), { type: "peer-away" });
+
+      const again = await open();
+      again.send({ type: "rejoin", room: "COMEBACK", token: guestToken });
+      assert.deepEqual(await again.next(), { type: "rejoined", room: "COMEBACK" });
+      assert.deepEqual(await host.next(), { type: "peer-back" });
+
+      host.send({ type: "command", n: 1 });
+      assert.deepEqual(await again.next(), { type: "command", n: 1 });
+    });
+
+    it("refuses a rejoin with the wrong token", async () => {
+      const { guest, open } = await pair("WRONGTOK");
+      guest.socket.terminate();
+      const stranger = await open();
+      stranger.send({ type: "rejoin", room: "WRONGTOK", token: "nope" });
+      assert.equal((await stranger.next()).type, "error");
+    });
+
+    it("gives up on a player who stays away longer than the grace period", async () => {
+      const { host, guest } = await pair("TOOLATE");
+      guest.socket.terminate();
+      assert.deepEqual(await host.next(), { type: "peer-away" });
+      assert.deepEqual(await host.next(), { type: "peer-left" });
+    });
+
+    it("ends the game at once when a player leaves on purpose", async () => {
+      const { host, guest } = await pair("ONPURPOSE");
+      guest.send({ type: "leave" });
+      assert.deepEqual(await host.next(), { type: "peer-left" });
+    });
   });
 });

@@ -15,6 +15,20 @@ SPDX-License-Identifier: CC-BY-NC-SA-4.0
 
 PokéRogue is a browser based Pokémon fangame heavily inspired by the roguelite genre. Battle endlessly while gathering stacking items, exploring many different biomes, fighting trainers, bosses, and more!
 
+# Co-op mode (this fork)
+
+This fork adds two-player online co-op: each player brings 3 Pokémon, every fight is a double battle, and both players pick
+their attacks and shop at the same time. Try it with:
+
+```sh
+pnpm install
+pnpm coop          # starts the relay server and the game page together
+```
+
+The host opens the page and picks **Co-op: host a game**; the friend opens the host's address (LAN or VPN IP, same port)
+and picks **Co-op: join a game**. See [docs/coop-playing.md](./docs/coop-playing.md) for details and
+[docs/coop-design.md](./docs/coop-design.md) for how it works.
+
 # Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md), this includes instructions on how to set up the game locally.

@@ -21,6 +21,7 @@ import { Trainer } from "#field/trainer";
 import { MoneyMultiplierModifier, type PokemonHeldItemModifier } from "#modifiers/modifier";
 import type { CustomModifierSettings } from "#modifiers/modifier-type";
 import type { MysteryEncounter } from "#mystery-encounters/mystery-encounter";
+import { applyCoopLevelBonus } from "#system/coop-balance";
 import { coopSession } from "#system/coop-session";
 import { trainerConfigs } from "#trainers/trainer-config";
 import type { NewBattleResolvedProps } from "#types/new-battle-props";
@@ -120,11 +121,12 @@ export class Battle {
     this.mysteryEncounterType = mysteryEncounterType;
     this.double = double;
 
-    this.enemyLevels =
+    this.enemyLevels = applyCoopLevelBonus(
       battleType === BattleType.TRAINER
         ? trainer?.getPartyLevels(this.waveIndex)
         : // TODO: Remove array.fill.map
-          new Array(double ? 2 : 1).fill(null).map(() => this.getLevelForWave());
+          new Array(double ? 2 : 1).fill(null).map(() => this.getLevelForWave()),
+    );
   }
 
   public get isClassicFinalBoss(): boolean {

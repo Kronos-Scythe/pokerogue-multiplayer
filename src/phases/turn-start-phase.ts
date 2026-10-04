@@ -120,13 +120,23 @@ export class TurnStartPhase extends FieldPhase {
     this.end();
   }
 
+  /** Co-op: whether the team's run attempt has been queued this turn (both players ask for it, it happens once) */
+  private runQueued = false;
+  /** Co-op: whether the "both have to run" message has been shown this turn */
+  private runRefused = false;
+
   private handleTurnCommand(turnCommand: TurnCommand, pokemon: Pokemon) {
     switch (turnCommand?.command) {
       case Command.FIGHT:
         this.handleFightCommand(turnCommand, pokemon);
         break;
       case Command.BALL:
-        globalScene.phaseManager.unshiftNew("AttemptCapturePhase", turnCommand.targets![0] % 2, turnCommand.cursor!); //TODO: is the bang correct here?
+        globalScene.phaseManager.unshiftNew(
+          "AttemptCapturePhase",
+          turnCommand.targets![0] % 2, //TODO: is the bang correct here?
+          turnCommand.cursor!,
+          coopSession.enabled && pokemon.isPlayer() ? pokemon.owner : undefined,
+        );
         break;
       case Command.POKEMON:
         globalScene.phaseManager.unshiftNew(
@@ -139,6 +149,21 @@ export class TurnStartPhase extends FieldPhase {
         );
         break;
       case Command.RUN:
+        if (coopSession.enabled) {
+          // Co-op: the team only runs when every Pokemon on the field was told to
+          const field = globalScene.getPlayerField().filter(p => p.isActive());
+          if (!field.every(p => globalScene.currentBattle.turnCommands[p.getBattlerIndex()]?.command === Command.RUN)) {
+            if (!this.runRefused) {
+              this.runRefused = true;
+              globalScene.phaseManager.queueMessage("Both players have to choose Run to flee!", null, true);
+            }
+            break;
+          }
+          if (this.runQueued) {
+            break;
+          }
+          this.runQueued = true;
+        }
         globalScene.phaseManager.unshiftNew("AttemptRunPhase");
         break;
     }

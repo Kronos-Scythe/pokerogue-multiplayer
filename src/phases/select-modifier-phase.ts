@@ -79,6 +79,12 @@ export class SelectModifierPhase extends BattlePhase {
   /** Co-op simultaneous shop: where the local player is */
   private simStage: "picking" | "waiting" | "done" = "picking";
   private simCallback?: ModifierSelectCallback;
+  /** Co-op simultaneous shop: how many times the rewards have been rerolled (by either player) */
+  private simEpoch = 0;
+  /** Co-op simultaneous shop: the reroll count the local player's current choice was made against */
+  private pickEpoch = 0;
+  /** Co-op simultaneous shop: what the partner bought or took, to tell the local player afterwards */
+  private partnerLog: string[] = [];
 
   constructor(
     rerollCount = 0,
@@ -150,8 +156,11 @@ export class SelectModifierPhase extends BattlePhase {
       switch (rowCursor) {
         // Execute one of the options from the bottom row
         case 0:
-          // Rerolling and locking rarities would change the rewards for both players, so they are off while shopping together
-          if (this.isSimultaneous() && (cursor === 0 || cursor === 3)) {
+          // A reroll changes the rewards for both players (and costs the one who rolls); locking rarities is off
+          if (this.isSimultaneous() && cursor === 0) {
+            return this.rerollSimultaneous();
+          }
+          if (this.isSimultaneous() && cursor === 3) {
             globalScene.ui.playError();
             return false;
           }
@@ -238,25 +247,32 @@ export class SelectModifierPhase extends BattlePhase {
         const option = this.getShopOption(action.rowCursor, action.cursor);
         const modifier = this.buildModifier(option.type, action.target);
         const cost = this.getShopCost(option);
-        if (
-          modifier
-          && globalScene.addModifier(modifier, false, false, undefined, undefined, cost)
-          && !activeOverrides.WAIVE_ROLL_FEE_OVERRIDE
-        ) {
-          this.budgets[partner] -= cost;
+        if (modifier && globalScene.addModifier(modifier, false, false, undefined, undefined, cost)) {
+          this.partnerLog.push(`Your partner bought ${option.type.name}.`);
+          if (!activeOverrides.WAIVE_ROLL_FEE_OVERRIDE) {
+            this.budgets[partner] -= cost;
+          }
         }
         break;
       }
+      case "reroll":
+        this.onPartnerReroll(action.epoch ?? this.simEpoch + 1);
+        break;
       case "transfer":
         this.transferItem(action.from, action.item, action.quantity, action.to);
         break;
       case "reward":
-        this.locks.set(partner, { kind: "reward", cursor: action.cursor, target: action.target });
-        this.tryResolve();
+        // a choice made against rewards that have been rerolled since is out of date
+        if ((action.epoch ?? 0) === this.simEpoch) {
+          this.locks.set(partner, { kind: "reward", cursor: action.cursor, target: action.target });
+          this.tryResolve();
+        }
         break;
       case "skip":
-        this.locks.set(partner, { kind: "skip" });
-        this.tryResolve();
+        if ((action.epoch ?? 0) === this.simEpoch) {
+          this.locks.set(partner, { kind: "skip" });
+          this.tryResolve();
+        }
         break;
     }
   }
@@ -265,10 +281,17 @@ export class SelectModifierPhase extends BattlePhase {
   private lockLocalPick(
     pick: { kind: "reward"; cursor: number; target?: CoopPickTarget | undefined } | { kind: "skip" },
   ): void {
+    if (pick.kind === "reward" && this.pickEpoch !== this.simEpoch) {
+      // the rewards were rerolled while the party menu was open
+      this.pickAgain("The rewards were rerolled! Pick again.");
+      return;
+    }
     this.locks.set(coopSession.localSeat, pick);
     this.simStage = "waiting";
     coopSession.sendShop?.(
-      pick.kind === "skip" ? { kind: "skip" } : { kind: "reward", cursor: pick.cursor, target: pick.target },
+      pick.kind === "skip"
+        ? { kind: "skip", epoch: this.simEpoch }
+        : { kind: "reward", cursor: pick.cursor, target: pick.target, epoch: this.simEpoch },
     );
     if (this.locks.has(this.partnerSeat())) {
       this.tryResolve();
@@ -297,7 +320,7 @@ export class SelectModifierPhase extends BattlePhase {
       return;
     }
     if (a.kind === "reward" && b.kind === "reward" && a.cursor === b.cursor) {
-      this.handOut(a);
+      this.handOut(first, a);
       this.typeOptions.splice(a.cursor, 1);
       this.locks.set(first, { kind: "done" });
       this.locks.delete(second);
@@ -317,13 +340,13 @@ export class SelectModifierPhase extends BattlePhase {
       }
       return;
     }
-    this.handOut(a);
-    this.handOut(b);
+    this.handOut(first, a);
+    this.handOut(second, b);
     this.finishSimultaneous();
   }
 
   /** Give a locked-in reward to its player's Pokemon. */
-  private handOut(pick: CoopLockedPick): void {
+  private handOut(seat: CoopSeat, pick: CoopLockedPick): void {
     if (pick.kind !== "reward") {
       return;
     }
@@ -331,7 +354,86 @@ export class SelectModifierPhase extends BattlePhase {
     const modifier = type ? this.buildModifier(type, pick.target) : null;
     if (modifier) {
       globalScene.addModifier(modifier, false, true);
+      if (seat !== coopSession.localSeat) {
+        this.partnerLog.push(`Your partner took ${type!.name}.`);
+      }
     }
+  }
+
+  /** Reopen the shop for the local player after their choice fell through, with a message why. */
+  private pickAgain(message: string): void {
+    this.simStage = "picking";
+    globalScene.ui.setMode(UiMode.MESSAGE).then(() => {
+      globalScene.ui.showText(
+        message,
+        null,
+        () => {
+          if (!this.ended && this.simStage === "picking") {
+            this.resetModifierSelect(this.simCallback!);
+          }
+        },
+        1500,
+      );
+    });
+  }
+
+  /** Co-op simultaneous shop: the local player pays to reroll the rewards for both players. */
+  private rerollSimultaneous(): boolean {
+    const cost = this.getRerollCost(false);
+    const waived = activeOverrides.WAIVE_ROLL_FEE_OVERRIDE;
+    if (cost < 0 || (globalScene.money < cost && !waived)) {
+      globalScene.ui.playError();
+      return false;
+    }
+    const epoch = this.simEpoch + 1;
+    coopSession.sendShop?.({ kind: "reroll", epoch });
+    this.regenerateOptions(epoch);
+    if (!waived) {
+      this.budgets[coopSession.localSeat] -= cost;
+      globalScene.money = this.budgets[coopSession.localSeat];
+      globalScene.updateMoneyText();
+      globalScene.animateMoneyChanged(false);
+    }
+    audioManager.playSound("se/buy");
+    this.pickAgain("The rewards were rerolled!");
+    return false;
+  }
+
+  /** Co-op simultaneous shop: the partner paid to reroll. */
+  private onPartnerReroll(epoch: number): void {
+    // The partner's wallet pays what a reroll cost at the point they rolled
+    const cost = this.getRerollCost(false, epoch - 1);
+    if (cost > 0 && !activeOverrides.WAIVE_ROLL_FEE_OVERRIDE) {
+      this.budgets[this.partnerSeat()] -= cost;
+    }
+    if (epoch <= this.simEpoch) {
+      // both players rolled at once: the rewards were already rerolled here
+      return;
+    }
+    this.regenerateOptions(epoch);
+    // anything chosen against the old rewards is out of date
+    if (this.simStage === "waiting" && this.locks.get(coopSession.localSeat)?.kind !== "done") {
+      this.locks.delete(coopSession.localSeat);
+      this.pickAgain("Your partner rerolled the rewards! Pick again.");
+    }
+  }
+
+  /** Roll a new set of rewards the same way on both clients, whatever else has happened in the shop so far. */
+  private regenerateOptions(epoch: number): void {
+    this.simEpoch = epoch;
+    for (const [seat, lock] of [...this.locks]) {
+      if (lock.kind !== "done") {
+        this.locks.delete(seat);
+      }
+    }
+    const party = globalScene.getPlayerParty();
+    globalScene.executeWithSeedOffset(
+      () => {
+        regenerateModifierPoolThresholds(party, this.getPoolType(), epoch);
+        this.typeOptions = getPlayerModifierTypeOptions(this.getModifierCount(true), party);
+      },
+      globalScene.currentBattle.waveIndex + epoch * 1000,
+    );
   }
 
   private finishSimultaneous(): void {
@@ -341,6 +443,9 @@ export class SelectModifierPhase extends BattlePhase {
     globalScene.updateMoneyText();
     globalScene.ui.clearText();
     globalScene.ui.setMode(UiMode.MESSAGE);
+    for (const line of this.partnerLog) {
+      globalScene.phaseManager.queueMessage(line, undefined, true);
+    }
     this.endNow();
   }
 
@@ -513,6 +618,7 @@ export class SelectModifierPhase extends BattlePhase {
     }
     const modifierType = this.typeOptions[cursor].type;
     this.pendingPick = { kind: "reward", cursor };
+    this.pickEpoch = this.simEpoch;
     return this.applyChosenModifier(modifierType, -1, modifierSelectCallback);
   }
 
@@ -805,13 +911,13 @@ export class SelectModifierPhase extends BattlePhase {
   }
 
   // Function that determines how many reward slots are available
-  private getModifierCount(): number {
+  private getModifierCount(ignoreCustom = false): number {
     const modifierCountHolder = new NumberHolder(3);
     globalScene.applyModifiers(ExtraModifierModifier, true, modifierCountHolder);
     globalScene.applyModifiers(TempExtraModifierModifier, true, modifierCountHolder);
 
     // If custom modifiers are specified, overrides default item count
-    if (this.customModifierSettings) {
+    if (this.customModifierSettings && !ignoreCustom) {
       const newItemCount =
         (this.customModifierSettings.guaranteedModifierTiers?.length ?? 0)
         + (this.customModifierSettings.guaranteedModifierTypeOptions?.length ?? 0)
@@ -847,7 +953,7 @@ export class SelectModifierPhase extends BattlePhase {
     return true;
   }
 
-  getRerollCost(lockRarities: boolean): number {
+  getRerollCost(lockRarities: boolean, epoch = this.simEpoch): number {
     let baseValue = 0;
     if (activeOverrides.WAIVE_ROLL_FEE_OVERRIDE) {
       return baseValue;
@@ -873,7 +979,7 @@ export class SelectModifierPhase extends BattlePhase {
     }
 
     const baseMultiplier = Math.min(
-      Math.ceil(globalScene.currentBattle.waveIndex / 10) * baseValue * 2 ** this.rerollCount * multiplier,
+      Math.ceil(globalScene.currentBattle.waveIndex / 10) * baseValue * 2 ** (this.rerollCount + epoch) * multiplier,
       Number.MAX_SAFE_INTEGER,
     );
 

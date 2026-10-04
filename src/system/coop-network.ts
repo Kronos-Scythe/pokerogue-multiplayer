@@ -1,10 +1,11 @@
 import {
+  type CoopChoice,
   type CoopCommandMessage,
-  type CoopLearnChoice,
   type CoopSeat,
   type CoopShopAction,
   coopSession,
 } from "#system/coop-session";
+import { coopSnapshot } from "#system/coop-snapshot";
 import type { Starter } from "#types/save-data";
 import { randomString } from "#utils/common";
 
@@ -16,13 +17,20 @@ type Wire =
   | { type: "starters"; starters: CoopStarter[]; seed?: string }
   | { type: "command"; message: CoopCommandMessage }
   | { type: "shop"; action: CoopShopAction }
-  | { type: "learn"; choice: CoopLearnChoice }
-  | { type: "sync"; wave: number; turn: number; state: string; rng: string };
+  | { type: "choice"; choice: CoopChoice }
+  | { type: "sync"; wave: number; turn: number; state: string; rng: string }
+  /** The host's snapshot of the wave: both games go back to the start of the wave from it */
+  | { type: "resync"; session: string }
+  /** The sender has loaded the snapshot; everything it sent before this was from before the rewind */
+  | { type: "resync-ready" };
 
 type RelayMessage =
-  | { type: "hosted"; room: string }
-  | { type: "joined"; room: string }
+  | { type: "hosted"; room: string; token?: string }
+  | { type: "joined"; room: string; token?: string }
+  | { type: "rejoined"; room: string }
   | { type: "peer-joined" }
+  | { type: "peer-away" }
+  | { type: "peer-back" }
   | { type: "peer-left" }
   | { type: "error"; message: string };
 
@@ -39,6 +47,9 @@ export interface CoopSocket {
 
 /** `WebSocket.OPEN` */
 const SOCKET_OPEN = 1;
+
+/** How many times the host may send the game back to the start of the same wave */
+const MAX_RESYNCS_PER_WAVE = 3;
 
 /** The team the two players put together at the start of a run. */
 export interface CoopRunSetup {
@@ -66,12 +77,35 @@ class CoopNetwork {
   public onPartnerLeft: (() => void) | null = null;
   /** Called when the two games disagree about the state of the run */
   public onDesync: ((wave: number, turn: number, what: string) => void) | null = null;
+  /** Called with the host's snapshot when both games have to go back to the start of the wave */
+  public onResync: ((session: string) => void) | null = null;
+  /** Called when the other player's connection dropped during a run (they have a while to come back) */
+  public onPartnerAway: (() => void) | null = null;
+  /** Called when the other player is back after a dropped connection */
+  public onPartnerBack: (() => void) | null = null;
+  /** Called when this client lost its own connection (and is trying to get it back), and when it did */
+  public onReconnecting: (() => void) | null = null;
+  public onReconnected: (() => void) | null = null;
+
+  /** How long to wait between attempts to get the connection back, and how long to keep trying */
+  public reconnectDelayMs = 2000;
+  public reconnectGiveUpMs = 5 * 60_000;
 
   public role: "host" | "join" | null = null;
   public room: string | null = null;
 
   private socket: CoopSocket | null = null;
   private ready = false;
+  private server = "";
+  /** What the relay gave this player to take their place in the room again */
+  private token: string | null = null;
+  /** Whether the run has started (from then on a dropped connection can be picked up again) */
+  private runStarted = false;
+  private reconnecting = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** After a rewind: everything from the other game is stale until it says it has loaded the snapshot */
+  private resyncing = false;
+  private readonly resyncsPerWave = new Map<number, number>();
   private readonly early: Wire[] = [];
   private waiting: { type: Wire["type"]; resolve: (wire: Wire) => void }[] = [];
   private readonly ownStates = new Map<string, { state: string; rng: string }>();
@@ -89,6 +123,7 @@ class CoopNetwork {
   public connect(options: { server: string; role: "host" | "join"; room?: string | undefined }): Promise<string> {
     this.disconnect();
     this.role = options.role;
+    this.server = options.server;
     return new Promise<string>((resolve, reject) => {
       const socket = this.socketFactory(options.server);
       this.socket = socket;
@@ -108,7 +143,7 @@ class CoopNetwork {
           coopSession.start({ localSeat: options.role === "host" ? 0 : 1 });
           coopSession.send = message => this.sendWire({ type: "command", message });
           coopSession.sendShop = action => this.sendWire({ type: "shop", action });
-          coopSession.sendLearn = choice => this.sendWire({ type: "learn", choice });
+          coopSession.sendChoice = choice => this.sendWire({ type: "choice", choice });
           resolve(room);
         }
       };
@@ -124,7 +159,11 @@ class CoopNetwork {
       socket.onclose = () => {
         if (settled && this.ready) {
           this.ready = false;
-          this.onPartnerLeft?.();
+          if (this.runStarted && this.token) {
+            this.startReconnect();
+          } else {
+            this.onPartnerLeft?.();
+          }
         } else {
           fail("The connection to the relay server closed.");
         }
@@ -152,33 +191,66 @@ class CoopNetwork {
     switch (message.type) {
       case "hosted":
         this.pendingRoom = message.room;
+        this.token = message.token ?? null;
         this.onStatus?.(`Room ${message.room} is open. Waiting for your partner...`);
         return;
       case "peer-joined":
         succeed(this.pendingRoom ?? "");
         return;
       case "joined":
+        this.token = message.token ?? null;
         if (role === "join") {
           succeed(message.room);
         }
         return;
+      case "peer-away":
+        this.onPartnerAway?.();
+        return;
+      case "peer-back":
+        this.onPartnerBack?.();
+        // After any gap, messages may have been lost: the host sends both games back to the start of the wave
+        this.requestResync();
+        return;
+      case "rejoined":
+        this.ready = true;
+        this.reconnecting = false;
+        this.onReconnected?.();
+        this.requestResync();
+        return;
       case "peer-left":
         this.ready = false;
+        this.stopReconnecting();
         this.onPartnerLeft?.();
         return;
       case "error":
         fail(message.message);
         return;
+      case "resync":
+        this.beginResync();
+        this.onResync?.(message.session);
+        return;
+      case "resync-ready":
+        this.resyncing = false;
+        return;
       case "command":
-        coopSession.receive(message.message);
+        if (!this.resyncing) {
+          coopSession.receive(message.message);
+        }
         return;
       case "shop":
-        coopSession.receiveShop(message.action);
+        if (!this.resyncing) {
+          coopSession.receiveShop(message.action);
+        }
         return;
-      case "learn":
-        coopSession.receiveLearn(message.choice);
+      case "choice":
+        if (!this.resyncing) {
+          coopSession.receiveChoice(message.choice);
+        }
         return;
       case "sync":
+        if (this.resyncing) {
+          return;
+        }
         this.partnerStates.set(`${message.wave}:${message.turn}`, { state: message.state, rng: message.rng });
         this.compare(message.wave, message.turn);
         return;
@@ -260,11 +332,144 @@ class CoopNetwork {
     }
   }
 
+  /**
+   * The run has started, so a dropped connection is no longer the end of it: the relay keeps this player's place for a
+   * while and the connection tries to come back on its own.
+   */
+  public markRunStarted(): void {
+    if (!this.runStarted) {
+      this.runStarted = true;
+      this.sendRaw({ type: "resumable" });
+    }
+  }
+
+  /**
+   * Host only: send the snapshot of the current wave to the guest and go back to it here too.
+   * Does nothing when there is no snapshot yet, or when the same wave was rewound too many times already
+   * (so a problem that keeps coming back cannot trap the players in a loop).
+   * @returns Whether a rewind was started
+   */
+  public requestResync(): boolean {
+    const session = coopSnapshot.latest;
+    if (this.role !== "host" || !session || this.resyncing || !this.ready) {
+      return false;
+    }
+    const times = (this.resyncsPerWave.get(coopSnapshot.wave) ?? 0) + 1;
+    if (times > MAX_RESYNCS_PER_WAVE) {
+      return false;
+    }
+    this.resyncsPerWave.set(coopSnapshot.wave, times);
+    this.sendWire({ type: "resync", session });
+    this.beginResync();
+    this.onResync?.(session);
+    return true;
+  }
+
+  private beginResync(): void {
+    this.resyncing = true;
+    this.ownStates.clear();
+    this.partnerStates.clear();
+    coopSession.clearPending();
+  }
+
+  /** This game has gone back to the snapshot: tell the other game that what it receives from now on is current. */
+  public finishResync(): void {
+    this.sendWire({ type: "resync-ready" });
+  }
+
+  /** Try to get a dropped connection back, until it works or too much time has passed. */
+  private startReconnect(): void {
+    if (this.reconnecting) {
+      return;
+    }
+    this.reconnecting = true;
+    this.onReconnecting?.();
+    const started = Date.now();
+    const attempt = () => {
+      this.reconnectTimer = null;
+      if (!this.reconnecting) {
+        return;
+      }
+      if (Date.now() - started > this.reconnectGiveUpMs) {
+        this.reconnecting = false;
+        this.onPartnerLeft?.();
+        return;
+      }
+      const retry = () => {
+        if (this.reconnecting && !this.reconnectTimer) {
+          this.reconnectTimer = setTimeout(attempt, this.reconnectDelayMs);
+        }
+      };
+      let socket: CoopSocket;
+      try {
+        socket = this.socketFactory(this.server);
+      } catch {
+        retry();
+        return;
+      }
+      this.socket = socket;
+      socket.onopen = () => this.sendRaw({ type: "rejoin", room: this.room, token: this.token });
+      socket.onerror = () => retry();
+      socket.onclose = () => {
+        if (this.reconnecting) {
+          retry();
+        } else if (this.ready) {
+          // the new connection dropped too, after it had been established
+          this.ready = false;
+          this.startReconnect();
+        }
+      };
+      socket.onmessage = event => {
+        let message: RelayMessage | Wire;
+        try {
+          message = JSON.parse(String(event.data));
+        } catch {
+          return;
+        }
+        if (message.type === "error") {
+          // The relay no longer knows this player (the room expired): there is nothing to come back to
+          this.reconnecting = false;
+          this.onPartnerLeft?.();
+          return;
+        }
+        this.handle(
+          message,
+          () => {},
+          () => {},
+          this.role ?? "join",
+        );
+      };
+    };
+    attempt();
+  }
+
+  private stopReconnecting(): void {
+    this.reconnecting = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
   /** Leave the room and drop the connection. */
   public disconnect(): void {
     const socket = this.socket;
     this.socket = null;
+    this.stopReconnecting();
+    if (socket && this.ready) {
+      // say goodbye properly, so the other player is told at once instead of waiting for us to come back
+      try {
+        socket.send(JSON.stringify({ type: "leave" }));
+      } catch {
+        // already gone
+      }
+    }
     this.ready = false;
+    this.token = null;
+    this.runStarted = false;
+    this.resyncing = false;
+    this.resyncsPerWave.clear();
+    coopSnapshot.clear();
     this.room = null;
     this.role = null;
     this.pendingRoom = null;

@@ -1,7 +1,7 @@
 import { AbilityId } from "#enums/ability-id";
 import { MoveId } from "#enums/move-id";
 import { SpeciesId } from "#enums/species-id";
-import { type CoopLearnChoice, coopSession } from "#system/coop-session";
+import { type CoopChoice, coopSession } from "#system/coop-session";
 import { GameManager } from "#test/framework/game-manager";
 import Phaser from "phaser";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -42,11 +42,11 @@ describe("Co-op move learning", () => {
   });
 
   /** Make the second Pokemon (seat 1's) try to learn Tackle with the partner's client (seat 1) deciding */
-  async function teachPartnersPokemon(choice: CoopLearnChoice) {
+  async function teachPartnersPokemon(choice: CoopChoice) {
     coopSession.hotseat = false;
     const partners = game.scene.getPlayerParty()[1];
     expect(partners.getMoveset()).toHaveLength(4);
-    coopSession.receiveLearn(choice);
+    coopSession.receiveChoice(choice);
     game.scene.phaseManager.unshiftNew("LearnMovePhase", 1, MoveId.TACKLE);
     game.scene.phaseManager.getCurrentPhase().end();
     await game.phaseInterceptor.to("LearnMovePhase");
@@ -68,9 +68,9 @@ describe("Co-op move learning", () => {
   });
 
   it("carries the owner's answer over the wire", () => {
-    const sent: CoopLearnChoice[] = [];
-    coopSession.sendLearn = choice => sent.push(choice);
-    coopSession.sendLearn({ slot: 1 });
+    const sent: CoopChoice[] = [];
+    coopSession.sendChoice = choice => sent.push(choice);
+    coopSession.sendChoice({ slot: 1 });
     expect(sent).toEqual([{ slot: 1 }]);
   });
 });

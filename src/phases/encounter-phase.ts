@@ -35,7 +35,10 @@ import { doTrainerExclamation } from "#mystery-encounters/encounter-phase-utils"
 import { getGoldenBugNetSpecies } from "#mystery-encounters/encounter-pokemon-utils";
 import { BattlePhase } from "#phases/battle-phase";
 import { achvs } from "#system/achv";
+import { coopNetwork } from "#system/coop-network";
 import { coopSession } from "#system/coop-session";
+import { coopSnapshot } from "#system/coop-snapshot";
+import { coopTelemetry } from "#system/coop-telemetry";
 import { randSeedInt, randSeedItem } from "#utils/common";
 import i18next from "i18next";
 
@@ -298,9 +301,10 @@ export class EncounterPhase extends BattlePhase {
           this.trySetWeatherIfNewBiome();
           this.trySetTerrainIfNewBiome();
           // Game syncs to server on waves X1 and X6 (As of 1.2.0)
-          // Co-op runs are never saved
+          // Co-op runs are never saved to a slot; each client keeps a copy of the wave start instead, so the
+          // two games can go back to it together (see coop-snapshot)
           (coopSession.enabled
-            ? Promise.resolve(true)
+            ? this.coopCheckpoint()
             : globalScene.gameData.saveAll(
                 true,
                 battle.waveIndex % 5 === 1 || (globalScene.lastSavePlayTime ?? 0) >= 300,
@@ -581,7 +585,7 @@ export class EncounterPhase extends BattlePhase {
       }
     }
 
-    if (!this.loaded && coopSession.enabled) {
+    if (coopSession.enabled) {
       // Co-op: each seat sends out its own lead. A wiped seat's slot holds a fainted Pokemon and stays empty
       // (that seat spectates), and there is no pre-battle prompt to switch leads.
       globalScene.normalizeCoopParty();
@@ -630,6 +634,14 @@ export class EncounterPhase extends BattlePhase {
     handleTutorial(Tutorial.ACCESS_MENU).then(() => super.end());
 
     globalScene.phaseManager.pushNew("InitEncounterPhase");
+  }
+
+  /** Co-op: keep a copy of the run at the start of this wave, and let the connection know the run is under way. */
+  private coopCheckpoint(): Promise<boolean> {
+    coopSnapshot.capture();
+    coopTelemetry.startWave();
+    coopNetwork.markRunStarted();
+    return Promise.resolve(true);
   }
 
   protected displayFinalBossDialogue(): void {

@@ -38,9 +38,22 @@ confirmed. The host is seat 0 and the guest is seat 1.
 
 ## Things to know
 
-- Co-op runs are never saved, and earn no unlocks.
-- Ball and Run are disabled.
-- If the two games ever disagree, a warning is shown (check the browser console for the wave and turn).
+- Co-op runs are never saved to a slot, and earn no unlocks.
+- Both players choose their attacks at the same time. The one who picks first sees "Waiting for your partner...".
+- In the shop each player has half of the money, can buy and move items for their own team only, and locks in one
+  reward. If both want the same reward the player with priority (it alternates by wave) gets it and the other picks
+  again. Either player can pay to reroll the rewards.
+- **Run** only works when both players pick it on the same turn. **Poké Balls** work when one enemy is left, as in any
+  double battle; the player who threw the ball chooses which of their own Pokemon to release (or lets the new one go).
+- If the two games ever drift apart, the host's game resends the start of the wave and both go back to it
+  (you lose the progress of that wave, not the run).
+- If your connection drops, the game tries to reconnect by itself for up to 5 minutes. When it is back, both games go
+  back to the start of the wave. Reloading the page ends the run.
+
+## Balance testing
+
+When a run ends, the wave-by-wave log is printed to the browser console (and `coopRunLog(true)` copies it as CSV any time).
+Try other difficulty settings with `?coopBossCut=0&coopLevels=2` on the page address (both players must use the same).
 
 ## Profiles
 
@@ -55,5 +68,5 @@ Pokedex. Co-op runs are never saved.
 ## Leaving a run
 
 **Leave co-op run** in the menu ends the run and goes back to the title screen (nothing is saved). If either player
-quits, closes the tab or loses the connection, the other player sees "Your partner left the game" and is taken back
-to the title screen too.
+uses **Leave co-op run**, the other player sees "Your partner left the game" and is taken back to the title screen too.
+A connection that simply drops is waited for (see above).

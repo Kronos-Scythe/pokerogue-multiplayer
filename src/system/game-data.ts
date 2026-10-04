@@ -867,6 +867,11 @@ export class GameData {
     return true;
   }
 
+  /** Re-initialize the game from session data that is already in hand (co-op rewinds to a snapshot this way). */
+  public async loadSessionFromData(sessionData: SessionSaveData): Promise<void> {
+    await this.initSessionFromData(sessionData);
+  }
+
   // TODO: This needs a giant refactor and overhaul
   private async initSessionFromData(fromSession: SessionSaveData): Promise<void> {
     if (isBeta || isDev) {

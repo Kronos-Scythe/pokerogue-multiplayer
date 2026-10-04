@@ -118,6 +118,7 @@ describe("Co-op shop", () => {
 
   const pickLocal = (phase: any, cursor: number) => {
     phase.pendingPick = { kind: "reward", cursor };
+    phase.pickEpoch = phase.simEpoch;
     phase.applyModifier(phase.typeOptions[cursor].type.newModifier(), -1);
   };
 
@@ -148,7 +149,7 @@ describe("Co-op shop", () => {
     expect(shown).toBe(budgets[0]);
     expect(game.scene.money).toBe(total);
     expect(game.scene.modifiers.length).toBe(before + 2);
-    expect(sent.filter(a => a.kind === "reward")).toEqual([{ kind: "reward", cursor: 0, target: undefined }]);
+    expect(sent.filter(a => a.kind === "reward")).toEqual([{ kind: "reward", cursor: 0, target: undefined, epoch: 0 }]);
   });
 
   it("gives a reward both players wanted to the priority seat and lets the other pick again", async () => {
@@ -201,7 +202,7 @@ describe("Co-op shop", () => {
     await game.phaseInterceptor.to("TurnInitPhase");
 
     expect(game.scene.modifiers.length).toBe(before + 1);
-    expect(sent).toContainEqual({ kind: "skip" });
+    expect(sent).toContainEqual({ kind: "skip", epoch: 0 });
   });
 
   it("only lets a player pick their own Pokemon for items, TMs and fusions", async () => {
@@ -226,5 +227,64 @@ describe("Co-op shop", () => {
     expect(filtered[0]).toBeNull();
     expect(filtered[1]).toBe("Only your own team!");
     expect(filtered[2]).toBeNull();
+  });
+
+  it("lets either player reroll: the roller pays, both clients get the same new rewards", async () => {
+    await start({ localSeat: 0, hotseat: true });
+    game.scene.money = 100000;
+    await winWave({ localSeat: 0 });
+    let result: Record<string, any> = {};
+    game.onNextPrompt("SelectModifierPhase", UiMode.MODIFIER_SELECT, () => {
+      const phase = currentShop();
+      const before = [...phase.budgets];
+      const cost = phase.getRerollCost(false);
+      expect(phase.rerollSimultaneous()).toBe(false);
+      const afterOwn = [...phase.budgets];
+      const ownOptions = phase.typeOptions.map((o: ModifierTypeOption) => o.type.name);
+      // the same roll again from scratch (as the partner's client would do it) gives the same rewards
+      phase.regenerateOptions(1);
+      const again = phase.typeOptions.map((o: ModifierTypeOption) => o.type.name);
+      // the partner rolls next: their wallet pays, and the rewards change again
+      coopSession.receiveShop({ kind: "reroll", epoch: 2 });
+      result = { before, cost, afterOwn, ownOptions, again };
+    });
+    game.onNextPrompt("SelectModifierPhase", UiMode.MODIFIER_SELECT, () => {
+      const phase = currentShop();
+      result.epochAfter = phase.simEpoch;
+      result.budgetsAfter = [...phase.budgets];
+      forceRewards(phase);
+      pickLocal(phase, 0);
+      coopSession.receiveShop({ kind: "skip", epoch: 2 });
+    });
+    await game.phaseInterceptor.to("TurnInitPhase");
+
+    expect(result.cost).toBeGreaterThan(0);
+    expect(result.afterOwn[0]).toBe(result.before[0] - result.cost);
+    expect(result.afterOwn[1]).toBe(result.before[1]);
+    expect(result.again).toEqual(result.ownOptions);
+    expect(result.epochAfter).toBe(2);
+    // the partner's reroll was their second step, so it cost double
+    expect(result.budgetsAfter[1]).toBe(result.before[1] - result.cost * 2);
+    expect(sent.find(a => a.kind === "reroll")).toEqual({ kind: "reroll", epoch: 1 });
+  });
+
+  it("ignores a partner's choice made against rewards that have been rerolled since", async () => {
+    await start({ localSeat: 0, hotseat: true });
+    await winWave({ localSeat: 0 });
+    let locks = -1;
+    game.onNextPrompt("SelectModifierPhase", UiMode.MODIFIER_SELECT, () => {
+      const phase = currentShop();
+      coopSession.receiveShop({ kind: "reroll", epoch: 1 });
+      // sent before they rerolled, arrives after
+      coopSession.receiveShop({ kind: "reward", cursor: 0, epoch: 0 });
+      setTimeout(() => {
+        locks = phase.locks.size;
+        coopSession.receiveShop({ kind: "skip", epoch: 1 });
+        forceRewards(phase);
+        pickLocal(phase, 0);
+      }, 50);
+    });
+    await game.phaseInterceptor.to("TurnInitPhase");
+    expect(locks).toBe(0);
   });
 });

@@ -30,18 +30,50 @@ implementation maps onto the engine, so they survive outside of any one conversa
 
 ## Status
 
-Done: seats and ownership, forced doubles everywhere, seeded randomness in co-op, owner-aware switching and faint
-replacement (party menu, forced switches, wave start), the wipe/spectate flow with revive at the shop.
+Everything below is implemented and covered by the tests in `test/tests/system/coop-*.test.ts` and `server/relay.test.mjs`.
+None of it has been played in a real browser with two people yet.
 
-Per-seat command input is done: each seat's commands are sent as `CoopCommandMessage`s (`src/system/coop-commands.ts`) and the other client applies them. Ball and Run are disabled in co-op for now.
+- **Seats and ownership, forced doubles, seeded randomness, owner-aware switching and replacement, wipe/spectate.**
+- **Per-seat command input.** Each seat's commands are sent as `CoopCommandMessage`s (`src/system/coop-commands.ts`)
+  and the other client applies them. Both players pick at the same time.
+- **Simultaneous shop** (`SelectModifierPhase`). Either player can reroll: the roller pays from their own wallet, and the
+  rewards are re-rolled the same way on both clients (seeded by wave and reroll count, so what else happened in the
+  shop does not matter). A lock-in made against rewards that were rerolled since is thrown away. After the shop each
+  player is told what the partner bought or took.
+- **Run.** The team only flees when every Pokemon on the field was told to run. If only one player picks Run, nothing
+  happens and a message says both have to.
+- **Catching.** Balls work as in a normal double battle (only when one enemy is left). The player whose Pokemon threw
+  the ball decides what to release (their own Pokemon only) or to let the caught Pokemon go; the answer is sent as a
+  `CoopChoice` and the other client does the same. The caught Pokemon joins the thrower's team.
+- **Move learning.** When a Pokemon with a full move set learns a move (level-up, TM, evolution), only its owner is
+  asked what to forget. The answer is sent as a `CoopChoice` and the other client applies it (`LearnMovePhase`).
+- **Snapshots and rewinding** (`src/system/coop-snapshot.ts`). Both clients keep a copy of the run from the start of the
+  current wave (taken where the game would normally save, which co-op never does). When the games disagree
+  (`coopNetwork.onDesync`) the host sends its copy; both clients then go back to the title phase, load it the way
+  "continue" does, and carry on from the start of that wave. Messages sent before the rewind are ignored until the
+  other client says it has loaded the snapshot (`resync-ready`). The same wave is rewound at most 3 times, so a bug
+  that keeps coming back cannot trap the players in a loop.
+- **Reconnecting.** Once the run starts the relay keeps a dropped player's place for 5 minutes. The client retries on its
+  own, takes its place back with a token, and the host then rewinds both games (messages sent during the gap are lost,
+  so continuing from the current state would not be safe). If the other player quits on purpose they are told at once.
+  A page reload loses the in-memory snapshot, so reloading the tab still ends the run.
+- **Balance knobs and a run log** (`coop-balance.ts`, `coop-telemetry.ts`, see below).
 
-The simultaneous shop is done (`SelectModifierPhase`).
+## Balance
 
-Not done yet: the network layer (relay server and room codes, designed to work over a VPN, LAN or tunnel).
+Every boss loses one health segment in co-op (never below 2), so two bosses at once, including the two Eternatus, are
+less of a spike. Enemy levels are unchanged. These defaults are a guess. To try other values, add them to the page
+address (both players must use the same ones): `?coopBossCut=0` (segments each boss loses) and `?coopLevels=2`
+(levels every enemy gains, can be negative).
+
+Each wave is recorded (turns, faints, health left, money, whether there was a boss, how it ended). When a run ends the
+log is printed to the browser console as a table and kept in local storage (`coop_last_run`). At any time,
+`coopRunLog(true)` in the console copies the run as CSV for a spreadsheet. Playtests with the log are what the numbers
+should be tuned from.
 
 ## Known open items
 
-- **Move learning:** when a Pokemon with a full move set learns a move (level-up, TM, evolution), only its owner is asked what to forget. The answer is sent as a `learn` message and the other client applies it (`LearnMovePhase`).
-- **Balance (untested guess):** every boss loses one health segment in co-op (never below 2), so two bosses at once, including the two Eternatus, are less of a spike. The knob lives in `src/system/coop-balance.ts`. Enemy levels are unchanged and the numbers need real playtesting.
+- A page reload cannot be recovered (the snapshot lives in memory only).
 - Mystery encounters with a fixed enemy list (for example Fight or Flight) put two player slots against that fixed
   number of enemies. That is easier for the players and is left as is.
+- Level-up and evolution move prompts for a Pokemon wait for its owner, so the other player waits on that screen.

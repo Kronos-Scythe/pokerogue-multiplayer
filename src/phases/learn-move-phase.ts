@@ -77,7 +77,7 @@ export class LearnMovePhase extends PlayerPartyMemberPokemonPhase {
   /** Co-op: tell the partner what the owner of this Pokemon decided (a move slot to replace, or -1 for none). */
   private publishChoice(slot: number): void {
     if (coopSession.enabled && !coopSession.hotseat) {
-      coopSession.sendLearn?.({ slot });
+      coopSession.sendChoice?.({ slot });
     }
   }
 
@@ -87,7 +87,7 @@ export class LearnMovePhase extends PlayerPartyMemberPokemonPhase {
       `${getPokemonNameWithAffix(pokemon)} wants to learn ${move.name}. Your partner is deciding...`,
       0,
     );
-    const { slot } = await coopSession.awaitLearn();
+    const { slot } = await coopSession.awaitChoice();
     if (slot < 0 || slot > 3) {
       await globalScene.ui.showTextPromise(
         i18next.t("battle:learnMoveNotLearned", { pokemonName: getPokemonNameWithAffix(pokemon), moveName: move.name }),

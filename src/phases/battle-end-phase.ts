@@ -2,6 +2,7 @@ import { applyAbAttrs } from "#abilities/apply-ab-attrs";
 import { globalScene } from "#app/global-scene";
 import { LapsingPersistentModifier, LapsingPokemonHeldItemModifier } from "#modifiers/modifier";
 import { BattlePhase } from "#phases/battle-phase";
+import { coopTelemetry } from "#system/coop-telemetry";
 
 export class BattleEndPhase extends BattlePhase {
   public readonly phaseName = "BattleEndPhase";
@@ -23,6 +24,8 @@ export class BattleEndPhase extends BattlePhase {
       (phase: BattleEndPhase) => phase.isVictory,
     );
     globalScene.phaseManager.removeAllPhasesOfType("BattleEndPhase");
+
+    coopTelemetry.endWave(globalScene.currentBattle.successfulRun ? "fled" : this.isVictory ? "won" : "wiped");
 
     globalScene.gameData.gameStats.battles++;
     if (

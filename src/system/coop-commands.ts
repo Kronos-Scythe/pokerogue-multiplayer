@@ -38,10 +38,22 @@ export function publishLocalCommand(fieldIndex: number): void {
 
 /**
  * Turn a command received from the other client into the turn command for `fieldIndex`.
- * Only fight and switch commands can be sent; balls and running are not available in co-op yet.
+ * Fight, switch, ball and run commands can be sent.
  */
 export function applyRemoteCommand(fieldIndex: number, message: CoopCommandMessage): void {
   const { currentBattle } = globalScene;
+  if (message.command === Command.BALL) {
+    currentBattle.turnCommands[fieldIndex] = {
+      command: Command.BALL,
+      cursor: message.cursor,
+      targets: (message.targets ?? []) as BattlerIndex[],
+    };
+    return;
+  }
+  if (message.command === Command.RUN) {
+    currentBattle.turnCommands[fieldIndex] = { command: Command.RUN };
+    return;
+  }
   if (message.command === Command.POKEMON) {
     currentBattle.turnCommands[fieldIndex] = {
       command: Command.POKEMON,

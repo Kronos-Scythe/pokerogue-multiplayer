@@ -23,6 +23,7 @@ import type { EnemyPokemon } from "#field/pokemon";
 import { PokemonHeldItemModifier } from "#modifiers/modifier";
 import { PokemonPhase } from "#phases/pokemon-phase";
 import { achvs } from "#system/achv";
+import { type CoopSeat, coopSession } from "#system/coop-session";
 import type { OptionSelectModeConfig } from "#types/ui-types";
 import type { PartyOption } from "#ui/party-ui-handler";
 import { SummaryUiMode } from "#ui/summary-ui-handler";
@@ -37,10 +38,14 @@ export class AttemptCapturePhase extends PokemonPhase {
   private pokeball: Phaser.GameObjects.Sprite;
   private originalY: number;
 
-  constructor(targetIndex: number, pokeballType: PokeballType) {
+  /** Co-op: the seat whose Pokemon threw the ball (the caught Pokemon joins their team, and they make the choices) */
+  private readonly thrower?: CoopSeat | undefined;
+
+  constructor(targetIndex: number, pokeballType: PokeballType, thrower?: CoopSeat) {
     super(BattlerIndex.ENEMY + targetIndex);
 
     this.pokeballType = pokeballType;
+    this.thrower = thrower;
   }
 
   start() {
@@ -295,6 +300,9 @@ export class AttemptCapturePhase extends PokemonPhase {
         };
         const addToParty = (slotIndex?: number) => {
           const newPokemon = pokemon.addToParty(this.pokeballType, slotIndex);
+          if (newPokemon && this.thrower !== undefined) {
+            newPokemon.owner = this.thrower;
+          }
           const modifiers = globalScene.findModifiers(m => m instanceof PokemonHeldItemModifier, false);
           if (globalScene.getPlayerParty().filter(p => p.isShiny()).length === PLAYER_PARTY_MAX_SIZE) {
             globalScene.validateAchv(achvs.SHINY_PARTY);
@@ -317,6 +325,29 @@ export class AttemptCapturePhase extends PokemonPhase {
             return;
           }
           if (globalScene.getPlayerParty().length === PLAYER_PARTY_MAX_SIZE) {
+            if (
+              this.thrower !== undefined
+              && coopSession.enabled
+              && !coopSession.hotseat
+              && !coopSession.controls(this.thrower)
+            ) {
+              // Co-op: the player who threw the ball decides what to release, and this client does the same
+              ui.setMode(UiMode.MESSAGE).then(() => {
+                ui.showText(`Your partner caught ${pokemon.name}! They are deciding...`, 0);
+                void coopSession.awaitChoice().then(({ slot }) => {
+                  ui.showText("", 0);
+                  if (slot >= 0 && slot < PLAYER_PARTY_MAX_SIZE) {
+                    globalScene.removePartyMemberModifiers(slot);
+                    globalScene.getPlayerParty().splice(slot, 1)[0].destroy();
+                    addToParty(slot);
+                  } else {
+                    removePokemon();
+                    end();
+                  }
+                });
+              });
+              return;
+            }
             const addToPartyMenuConfig: OptionSelectModeConfig = {
               options: [
                 {
@@ -372,12 +403,17 @@ export class AttemptCapturePhase extends PokemonPhase {
                       (slotIndex: number, _option: PartyOption) => {
                         ui.setMode(UiMode.MESSAGE).then(() => {
                           if (slotIndex < PLAYER_PARTY_MAX_SIZE) {
+                            this.publishChoice(slotIndex);
                             addToParty(slotIndex);
                           } else {
                             promptRelease();
                           }
                         });
                       },
+                      // Co-op: only the thrower's own Pokemon can be let go
+                      this.thrower === undefined
+                        ? undefined
+                        : p => (p.owner === this.thrower ? null : "Only the player who caught it can choose!"),
                     );
                     return true;
                   },
@@ -386,6 +422,7 @@ export class AttemptCapturePhase extends PokemonPhase {
                   label: i18next.t("menu:no"),
                   handler: () => {
                     ui.setMode(UiMode.MESSAGE).then(() => {
+                      this.publishChoice(-1);
                       removePokemon();
                       end();
                     });
@@ -412,6 +449,13 @@ export class AttemptCapturePhase extends PokemonPhase {
       0,
       true,
     );
+  }
+
+  /** Co-op: tell the partner what the thrower decided (a party slot to release, or -1 to let the Pokemon go). */
+  private publishChoice(slot: number): void {
+    if (this.thrower !== undefined && coopSession.enabled && !coopSession.hotseat) {
+      coopSession.sendChoice?.({ slot });
+    }
   }
 
   removePb() {

@@ -23,6 +23,7 @@ import { ArenaData } from "#system/arena-data";
 import { ChallengeData } from "#system/challenge-data";
 import { coopNetwork } from "#system/coop-network";
 import { coopSession } from "#system/coop-session";
+import { coopTelemetry } from "#system/coop-telemetry";
 import { ModifierData as PersistentModifierData } from "#system/modifier-data";
 import { PokemonData } from "#system/pokemon-data";
 import { RibbonData, type RibbonFlag } from "#system/ribbon-data";
@@ -189,6 +190,8 @@ export class GameOverPhase extends BattlePhase {
   /** Co-op: say how the run ended, drop the connection and go back to the title screen. */
   private handleCoopGameOver(): void {
     globalScene.phaseManager.hideAbilityBar();
+    coopTelemetry.endWave(this.isVictory ? "won" : "wiped");
+    coopTelemetry.report();
     const text = this.isVictory
       ? "You beat the run together! Well played."
       : "Both teams were wiped out. The run is over.";

@@ -19,9 +19,12 @@ import { Unlockables } from "#enums/unlockables";
 import { getBiomeKey } from "#field/arena";
 import type { Modifier } from "#modifiers/modifier";
 import { getDailyRunStarterModifiers, regenerateModifierPoolThresholds } from "#modifiers/modifier-type";
+import { applyCoopBalanceParams } from "#system/coop-balance";
 import { leaveCoopRun } from "#system/coop-exit";
 import { coopNetwork } from "#system/coop-network";
 import { coopSession } from "#system/coop-session";
+import { coopSnapshot } from "#system/coop-snapshot";
+import { coopTelemetry } from "#system/coop-telemetry";
 import { type CoopUrlConfig, getCoopTitleConfigs } from "#system/coop-url";
 import { vouchers } from "#system/voucher";
 import type { OptionSelectItem, OptionSelectModeConfig } from "#types/ui-types";
@@ -50,8 +53,36 @@ export class TitlePhase extends Phase {
       audioManager.playBgm("title", true);
     }
 
+    // Co-op: the games were sent back to the start of the wave, so load the snapshot instead of showing the menu
+    if (coopSession.enabled && coopSnapshot.pendingResume) {
+      await this.resumeCoop();
+      return;
+    }
+
     const lastSlot = await this.checkLastSaveSlot();
     await this.showOptions(lastSlot);
+  }
+
+  /** Co-op: restore the run from the host's snapshot of the wave and carry on from the start of that wave. */
+  private async resumeCoop(): Promise<void> {
+    const { ui, gameData } = globalScene;
+    const session = coopSnapshot.pendingResume!;
+    coopSnapshot.pendingResume = null;
+    ui.setMode(UiMode.MESSAGE);
+    ui.showText("Getting back in sync with your partner...", 0);
+    try {
+      await gameData.loadSessionFromData(gameData.parseSessionData(session));
+    } catch (err) {
+      console.error(err);
+      leaveCoopRun("Could not get back in sync with your partner. Back to the title screen...");
+      return;
+    }
+    this.loaded = true;
+    // Keep what we have, in case the other game has to be sent back again
+    coopSnapshot.latest = session;
+    coopNetwork.finishResync();
+    ui.clearText();
+    this.end();
   }
 
   /**
@@ -220,14 +251,33 @@ export class TitlePhase extends Phase {
     ui.clearText();
     ui.showText("Connecting to the relay server...", 0);
     coopNetwork.onStatus = text => ui.showText(text, 0);
+    // Balance settings from the page address (e.g. ?coopBossCut=0&coopLevels=2) and a fresh run log
+    applyCoopBalanceParams(window.location.search);
+    coopTelemetry.clear();
     // Whenever the partner leaves (or the connection drops), end the run instead of waiting forever
     coopNetwork.onPartnerLeft = () => leaveCoopRun("Your partner left the game. Back to the title screen...");
+    // When the two games disagree, the host sends the start of the wave and both go back to it
     coopNetwork.onDesync = (wave, turn) => {
       console.error(`Co-op desync at wave ${wave}, turn ${turn}`);
-      globalScene.phaseManager.queueMessage(
-        `Warning: the two games have gone out of sync (wave ${wave}, turn ${turn}). Things may look different on your partner's screen.`,
-      );
+      if (coopNetwork.role === "host" && !coopNetwork.requestResync()) {
+        globalScene.phaseManager.queueMessage(
+          `Warning: the two games have gone out of sync (wave ${wave}, turn ${turn}) and could not be fixed. Things may look different on your partner's screen.`,
+        );
+      }
     };
+    coopNetwork.onResync = session => {
+      coopSnapshot.pendingResume = session;
+      globalScene.reset(true);
+    };
+    const say = (text: string) => {
+      if (globalScene.ui.mode === UiMode.MESSAGE) {
+        globalScene.ui.showText(text, 0);
+      }
+    };
+    coopNetwork.onReconnecting = () => say("Lost the connection. Trying to get it back...");
+    coopNetwork.onReconnected = () => say("Connected again! Syncing up...");
+    coopNetwork.onPartnerAway = () => say("Your partner lost their connection. Waiting for them to come back...");
+    coopNetwork.onPartnerBack = () => say("Your partner is back! Syncing up...");
     coopNetwork
       .connect({ server: config.server, role: config.role, room: config.room })
       .then(() => {
@@ -422,7 +472,8 @@ export class TitlePhase extends Phase {
 
     globalScene.phaseManager.pushNew("EncounterPhase", this.loaded);
 
-    if (this.loaded) {
+    // (a co-op run sends out its own Pokemon in the encounter phase)
+    if (this.loaded && !coopSession.enabled) {
       const availablePartyMembers = globalScene.getPokemonAllowedInBattle().length;
 
       globalScene.phaseManager.pushNew("SummonPhase", 0, true, true);
