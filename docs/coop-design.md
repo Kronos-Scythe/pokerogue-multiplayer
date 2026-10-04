@@ -19,8 +19,10 @@ implementation maps onto the engine, so they survive outside of any one conversa
 
 - The engine keeps its single 6-slot party. Each `PlayerPokemon` carries an `owner` seat (`0` or `1`), serialized in
   `PokemonData`. Old saves without an owner default to seat 0.
-- `getPlayerField()` is still "the first two party slots", so party order must keep seat 0's active Pokemon in slot 0
-  and seat 1's in slot 1. Switching has to be restricted to the owner's own bench.
+- `getPlayerField()` is still "the first two party slots". A field slot belongs to the team of the Pokemon sitting in
+  it, not to its index, and a slot is only ever refilled from the same team (`sameSeat`). `normalizeCoopParty()` puts
+  each team's first healthy Pokemon in slots 0 and 1 at the start of every wave. A wiped team keeps a fainted Pokemon
+  in its slot, which is what makes it spectate until a revive.
 - `coopSession` (`src/system/coop-session.ts`) holds whether a run is co-op, which seat this client plays, and a
   `hotseat` flag that lets one client control both seats for local testing.
 - Battles are seeded per wave, so both clients simulate the full game and only exchange player inputs (lockstep).
@@ -28,10 +30,10 @@ implementation maps onto the engine, so they survive outside of any one conversa
 
 ## Status
 
-Done: seats and ownership, forced doubles everywhere, seeded randomness in co-op.
+Done: seats and ownership, forced doubles everywhere, seeded randomness in co-op, owner-aware switching and faint
+replacement (party menu, forced switches, wave start), the wipe/spectate flow with revive at the shop.
 
-Not done yet: owner-aware switching and faint replacement, the wipe/spectate flow, per-seat command input, turn-taking
-in the shop, and the network layer (relay server and room codes, designed to work over a VPN, LAN or tunnel).
+Not done yet: per-seat command input, turn-taking in the shop, and the network layer (relay server and room codes, designed to work over a VPN, LAN or tunnel).
 
 ## Known open items
 

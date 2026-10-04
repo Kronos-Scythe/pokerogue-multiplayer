@@ -2,7 +2,7 @@ import { generateRandomStatusEffect } from "#data/status-effect";
 import { AbilityId } from "#enums/ability-id";
 import { MoveId } from "#enums/move-id";
 import { SpeciesId } from "#enums/species-id";
-import { coopSession } from "#system/coop-session";
+import { coopSession, sameSeat } from "#system/coop-session";
 import { PokemonData } from "#system/pokemon-data";
 import { GameManager } from "#test/framework/game-manager";
 import Phaser from "phaser";
@@ -48,9 +48,21 @@ describe("Co-op session", () => {
       expect(coopSession.controls(1)).toBe(true);
     });
 
-    it("maps field slot 0 to seat 0 and field slot 1 to seat 1", () => {
-      expect(coopSession.seatOfFieldIndex(0)).toBe(0);
-      expect(coopSession.seatOfFieldIndex(1)).toBe(1);
+    it("treats pokemon as the same seat outside co-op, whatever their owner", () => {
+      expect(sameSeat({ owner: 0 }, { owner: 1 })).toBe(true);
+    });
+
+    it("only treats pokemon of the same owner as the same seat in co-op", () => {
+      coopSession.start({ localSeat: 0, hotseat: true });
+      expect(sameSeat({ owner: 0 }, { owner: 0 })).toBe(true);
+      expect(sameSeat({ owner: 1 }, { owner: 1 })).toBe(true);
+      expect(sameSeat({ owner: 0 }, { owner: 1 })).toBe(false);
+    });
+
+    it("counts things without an owner as seat 0", () => {
+      coopSession.start({ localSeat: 0, hotseat: true });
+      expect(sameSeat({}, { owner: 0 })).toBe(true);
+      expect(sameSeat({}, { owner: 1 })).toBe(false);
     });
 
     it("returns to single-player behavior after reset", () => {

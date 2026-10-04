@@ -13,6 +13,7 @@ import { TrainerSlot } from "#enums/trainer-slot";
 import type { Pokemon } from "#field/pokemon";
 import { SwitchEffectTransferModifier } from "#modifiers/modifier";
 import { SummonPhase } from "#phases/summon-phase";
+import { coopSession, sameSeat } from "#system/coop-session";
 import type { MoveAttrString } from "#types/move-types";
 import { inSpeedOrder } from "#utils/speed-order-generator";
 import i18next from "i18next";
@@ -31,6 +32,9 @@ export class SwitchSummonPhase extends SummonPhase {
 
   private lastPokemon: Pokemon;
 
+  /** Co-op only: set when the switch has no valid replacement on the outgoing Pokemon's own team */
+  private coopCancelled = false;
+
   /**
    * Constructor for creating a new SwitchSummonPhase
    * @param switchType - The type of switch behavior
@@ -45,9 +49,35 @@ export class SwitchSummonPhase extends SummonPhase {
     this.switchType = switchType;
     this.slotIndex = slotIndex;
     this.doReturn = doReturn;
+
+    // Co-op safety net: every way of switching ends up here, so make sure a seat can only be replaced from its own
+    // team. Redirect to its own bench, or cancel if it has none.
+    if (player && coopSession.enabled) {
+      const party = globalScene.getPlayerParty();
+      const outgoing = party[fieldIndex];
+      const incoming = party[slotIndex];
+      if (outgoing != null && incoming != null && !sameSeat(outgoing, incoming)) {
+        const ownBenchIndex = party.findIndex(
+          (p, i) =>
+            i >= globalScene.currentBattle.getBattlerCount()
+            && p.isAllowedInBattle()
+            && !p.isOnField()
+            && sameSeat(p, outgoing),
+        );
+        if (ownBenchIndex === -1) {
+          this.coopCancelled = true;
+        } else {
+          this.slotIndex = ownBenchIndex;
+        }
+      }
+    }
   }
 
   start(): void {
+    if (this.coopCancelled) {
+      this.end();
+      return;
+    }
     super.start();
   }
 

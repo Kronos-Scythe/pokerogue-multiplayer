@@ -35,6 +35,7 @@ import { doTrainerExclamation } from "#mystery-encounters/encounter-phase-utils"
 import { getGoldenBugNetSpecies } from "#mystery-encounters/encounter-pokemon-utils";
 import { BattlePhase } from "#phases/battle-phase";
 import { achvs } from "#system/achv";
+import { coopSession } from "#system/coop-session";
 import { randSeedInt, randSeedItem } from "#utils/common";
 import i18next from "i18next";
 
@@ -575,7 +576,19 @@ export class EncounterPhase extends BattlePhase {
       }
     }
 
-    if (!this.loaded) {
+    if (!this.loaded && coopSession.enabled) {
+      // Co-op: each seat sends out its own lead. A wiped seat's slot holds a fainted Pokemon and stays empty
+      // (that seat spectates), and there is no pre-battle prompt to switch leads.
+      globalScene.normalizeCoopParty();
+      globalScene.getPlayerField().forEach((pokemon, fieldIndex) => {
+        if (pokemon.isAllowedInBattle() && !pokemon.isOnField()) {
+          globalScene.phaseManager.pushNew("SummonPhase", fieldIndex);
+        }
+      });
+      if (!globalScene.currentBattle.double && globalScene.getPlayerParty()[1]?.isOnField()) {
+        globalScene.phaseManager.pushNew("ReturnPhase", 1);
+      }
+    } else if (!this.loaded) {
       const availablePartyMembers = globalScene.getPokemonAllowedInBattle();
 
       if (!availablePartyMembers[0].isOnField()) {

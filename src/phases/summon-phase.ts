@@ -11,6 +11,7 @@ import { MysteryEncounterMode } from "#enums/mystery-encounter-mode";
 import { TrainerSlot } from "#enums/trainer-slot";
 import type { Pokemon } from "#field/pokemon";
 import { PartyMemberPokemonPhase } from "#phases/party-member-pokemon-phase";
+import { coopSession, sameSeat } from "#system/coop-session";
 import i18next from "i18next";
 
 export class SummonPhase extends PartyMemberPokemonPhase {
@@ -50,8 +51,16 @@ export class SummonPhase extends PartyMemberPokemonPhase {
       const party = this.getParty();
 
       // Find the first non-fainted Pokemon index above the current one
-      const legalIndex = party.findIndex((p, i) => i > this.partyMemberIndex && p.isAllowedInBattle());
+      // (in co-op, only from the same seat's team: a seat can't borrow its partner's Pokemon)
+      const legalIndex = party.findIndex(
+        (p, i) => i > this.partyMemberIndex && p.isAllowedInBattle() && sameSeat(p, partyMember),
+      );
       if (legalIndex === -1) {
+        // Co-op: this seat is wiped but its partner is not, so the slot stays empty and the seat spectates
+        if (this.player && coopSession.enabled && globalScene.getPokemonAllowedInBattle().length > 0) {
+          this.end();
+          return;
+        }
         console.error("Party Details:\n", party);
         console.error("All available Pokemon were fainted or illegal!");
         globalScene.phaseManager.clearPhaseQueue();

@@ -11,7 +11,8 @@ export const COOP_TEAM_SIZE = 3;
  * Tracks whether the current run is a co-op run, and which seat the local client sits in.
  *
  * Co-op keeps the engine's single 6-slot party and tags each `PlayerPokemon` with the seat that owns it.
- * Field slot `0` is always seat 0's active Pokemon and field slot `1` is always seat 1's.
+ * A field slot belongs to whichever seat owns the Pokemon sitting in it, and may only be refilled from that seat's own
+ * team. Slot *indices* are deliberately not tied to seats, because the engine sometimes shuffles party order.
  */
 class CoopSession {
   /** Whether the current run is a co-op run. */
@@ -40,11 +41,6 @@ class CoopSession {
     this.hotseat = false;
   }
 
-  /** The seat that controls a given player field slot. */
-  public seatOfFieldIndex(fieldIndex: number): CoopSeat {
-    return fieldIndex === 0 ? 0 : 1;
-  }
-
   /**
    * Whether this client supplies commands for the given seat.
    * Always `true` outside co-op, and for both seats in hotseat mode.
@@ -56,3 +52,16 @@ class CoopSession {
 
 /** The co-op session for this client. */
 export const coopSession = new CoopSession();
+
+/** Read the co-op seat off anything that may carry one. Things without an owner (enemies) count as seat 0. */
+function seatOf(pokemon: object): CoopSeat {
+  return (pokemon as { owner?: CoopSeat }).owner === 1 ? 1 : 0;
+}
+
+/**
+ * Whether two Pokemon belong to the same co-op seat.
+ * Always `true` outside co-op, so call sites can use it without checking {@linkcode coopSession} first.
+ */
+export function sameSeat(a: object, b: object): boolean {
+  return !coopSession.enabled || seatOf(a) === seatOf(b);
+}

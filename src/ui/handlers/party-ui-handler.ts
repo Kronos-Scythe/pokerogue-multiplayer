@@ -25,6 +25,7 @@ import type { PokemonFormChangeItemModifier, PokemonHeldItemModifier } from "#mo
 import type { PokemonMove } from "#moves/pokemon-move";
 import type { CommandPhase } from "#phases/command-phase";
 import { getVariantTint } from "#sprites/variant";
+import { coopSession, sameSeat } from "#system/coop-session";
 import type { TurnMove } from "#types/turn-move";
 import type { ConfirmModeConfig } from "#types/ui-types";
 import { getLearnableMoveSourceIconFrame } from "#ui/learnable-move-utils";
@@ -166,6 +167,18 @@ export class PartyUiHandler extends MessageUiHandler {
     }
     return null;
   };
+
+  /**
+   * Whether the given Pokemon may be sent out into the slot being switched. In co-op that means it must be on the
+   * same team as the Pokemon holding that slot. Always `true` outside co-op.
+   */
+  private isOwnTeamInCoop(pokemon: PlayerPokemon): boolean {
+    if (!coopSession.enabled) {
+      return true;
+    }
+    const slotPokemon = globalScene.getPlayerParty()[this.fieldIndex];
+    return slotPokemon == null || sameSeat(pokemon, slotPokemon);
+  }
 
   private static FilterAllMoves = (_pokemonMove: PokemonMove) => null;
 
@@ -1411,7 +1424,8 @@ export class PartyUiHandler extends MessageUiHandler {
       case PartyUiMode.SWITCH:
       case PartyUiMode.FAINT_SWITCH:
       case PartyUiMode.POST_BATTLE_SWITCH:
-        if (this.cursor >= globalScene.currentBattle.getBattlerCount()) {
+        // Co-op: a seat can look at its partner's Pokemon but can only send out its own
+        if (this.cursor >= globalScene.currentBattle.getBattlerCount() && this.isOwnTeamInCoop(pokemon)) {
           const allowBatonModifierSwitch = this.allowBatonModifierSwitch();
           const isBatonPassMove = this.isBatonPassMove();
 

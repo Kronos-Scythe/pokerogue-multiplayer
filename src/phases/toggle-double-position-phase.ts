@@ -1,6 +1,7 @@
 import { globalScene } from "#app/global-scene";
 import { FieldPosition } from "#enums/field-position";
 import { BattlePhase } from "#phases/battle-phase";
+import { coopSession } from "#system/coop-session";
 
 export class ToggleDoublePositionPhase extends BattlePhase {
   public readonly phaseName = "ToggleDoublePositionPhase";
@@ -14,6 +15,12 @@ export class ToggleDoublePositionPhase extends BattlePhase {
 
   start() {
     super.start();
+
+    // Co-op: slots belong to teams, and this phase can swap party slots, so leave every Pokemon where it is
+    if (coopSession.enabled) {
+      this.end();
+      return;
+    }
 
     const playerPokemon = globalScene.getPlayerField().find(p => p.isActive(true));
     if (playerPokemon) {

@@ -715,6 +715,34 @@ export class BattleScene extends SceneBase {
   }
 
   /**
+   * Co-op only: put each seat's lead in the first two party slots, so the engine's rule that the first slots of the
+   * party are the field gives each seat one field slot.
+   *
+   * A seat's lead is its first Pokemon that is allowed in battle. If the seat is wiped it is its first Pokemon (a
+   * fainted one), which leaves that slot empty so the seat spectates. The rest of the party keeps its order.
+   * Does nothing if either seat has no Pokemon, so partially built parties are left alone.
+   */
+  public normalizeCoopParty(): void {
+    if (!coopSession.enabled) {
+      return;
+    }
+
+    const leadOf = (seat: CoopSeat): PlayerPokemon | undefined => {
+      const team = this.party.filter(p => p.owner === seat);
+      return team.find(p => p.isAllowedInBattle()) ?? team[0];
+    };
+    const lead0 = leadOf(0);
+    const lead1 = leadOf(1);
+    if (lead0 === undefined || lead1 === undefined) {
+      return;
+    }
+
+    // Reorder in place: other code holds a reference to this array
+    const bench = this.party.filter(p => p !== lead0 && p !== lead1);
+    this.party.splice(0, this.party.length, lead0, lead1, ...bench);
+  }
+
+  /**
    * @returns The first {@linkcode PlayerPokemon} that is {@linkcode getPlayerField on the field}
    * and {@linkcode PlayerPokemon.isActive is active}
    * (aka {@linkcode PlayerPokemon.isAllowedInBattle is allowed in battle}),

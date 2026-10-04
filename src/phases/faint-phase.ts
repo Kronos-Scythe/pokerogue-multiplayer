@@ -18,6 +18,7 @@ import type { EnemyPokemon, PlayerPokemon, Pokemon } from "#field/pokemon";
 import { PokemonInstantReviveModifier } from "#modifiers/modifier";
 import { PokemonMove } from "#moves/pokemon-move";
 import { PokemonPhase } from "#phases/pokemon-phase";
+import { coopSession, sameSeat } from "#system/coop-session";
 import { inSpeedOrder } from "#utils/speed-order-generator";
 import i18next from "i18next";
 
@@ -160,11 +161,18 @@ export class FaintPhase extends PokemonPhase {
       const legalPlayerPokemon = globalScene.getPokemonAllowedInBattle();
       /** The total number of legal player Pokemon that aren't currently on the field */
       const legalPlayerPartyPokemon = legalPlayerPokemon.filter(p => !p.isActive(true));
+      /**
+       * The off-field Pokemon that may fill the slot left by this faint.
+       * In co-op that is only the fainted Pokemon's own team; if that team has none left it is wiped,
+       * its slot stays empty and it spectates until the next shop.
+       */
+      const replacementPokemon = legalPlayerPartyPokemon.filter(p => sameSeat(p, pokemon));
       if (legalPlayerPokemon.length === 0) {
-        /** If the player doesn't have any legal Pokemon, end the game */
+        /** If the player doesn't have any legal Pokemon (in co-op: neither team does), end the game */
         globalScene.phaseManager.unshiftNew("GameOverPhase");
       } else if (
-        globalScene.currentBattle.double
+        !coopSession.enabled // Co-op never moves a lone survivor into another slot, as slots belong to a team
+        && globalScene.currentBattle.double
         && legalPlayerPokemon.length === 1
         && legalPlayerPartyPokemon.length === 0
       ) {
@@ -173,7 +181,7 @@ export class FaintPhase extends PokemonPhase {
          * is already on the field, unshift a phase that moves that Pokemon to center position.
          */
         globalScene.phaseManager.unshiftNew("ToggleDoublePositionPhase", true);
-      } else if (legalPlayerPartyPokemon.length > 0) {
+      } else if (replacementPokemon.length > 0) {
         /**
          * If previous conditions weren't met, and the player has at least 1 legal Pokemon off the field,
          * push a phase that prompts the player to summon a Pokemon from their party.

@@ -3,6 +3,7 @@ import { PartyUiMode } from "#enums/party-ui-mode";
 import { SwitchType } from "#enums/switch-type";
 import { UiMode } from "#enums/ui-mode";
 import { BattlePhase } from "#phases/battle-phase";
+import { coopSession, sameSeat } from "#system/coop-session";
 import { PartyOption, PartyUiHandler } from "#ui/party-ui-handler";
 
 /**
@@ -38,8 +39,13 @@ export class SwitchPhase extends BattlePhase {
   start() {
     super.start();
 
+    /** The Pokemon currently holding (or just vacated) the slot being refilled */
+    const slotPokemon = globalScene.getPlayerParty()[this.fieldIndex];
+    /** In co-op, only the team that owns the slot may refill it */
+    const owner = coopSession.enabled ? slotPokemon?.owner : undefined;
+
     // Skip modal switch if impossible (no remaining party members that aren't already in battle)
-    if (this.isModal && globalScene.getPokemonAllowedInBattle().every(p => p.isOnField())) {
+    if (this.isModal && globalScene.getPokemonAllowedInBattle(owner).every(p => p.isOnField())) {
       return super.end();
     }
 
@@ -62,8 +68,11 @@ export class SwitchPhase extends BattlePhase {
     }
 
     // Override field index to 0 in case of double battle where 2/3 remaining legal party members fainted at once
+    // (co-op slots belong to teams, so the slot is never overridden there)
     const fieldIndex =
-      globalScene.currentBattle.getBattlerCount() === 1 || globalScene.getPokemonAllowedInBattle().length > 1
+      coopSession.enabled
+      || globalScene.currentBattle.getBattlerCount() === 1
+      || globalScene.getPokemonAllowedInBattle().length > 1
         ? this.fieldIndex
         : 0;
 
@@ -72,7 +81,10 @@ export class SwitchPhase extends BattlePhase {
       this.isModal ? PartyUiMode.FAINT_SWITCH : PartyUiMode.POST_BATTLE_SWITCH,
       fieldIndex,
       (slotIndex: number, option: PartyOption) => {
-        if (slotIndex >= globalScene.currentBattle.getBattlerCount() && slotIndex < 6) {
+        const incoming = globalScene.getPlayerParty()[slotIndex];
+        const ownTeam =
+          !coopSession.enabled || (incoming != null && slotPokemon != null && sameSeat(incoming, slotPokemon));
+        if (slotIndex >= globalScene.currentBattle.getBattlerCount() && slotIndex < 6 && ownTeam) {
           const switchType = option === PartyOption.PASS_BATON ? SwitchType.BATON_PASS : this.switchType;
           globalScene.phaseManager.unshiftNew("SwitchSummonPhase", switchType, fieldIndex, slotIndex, this.doReturn);
         }
