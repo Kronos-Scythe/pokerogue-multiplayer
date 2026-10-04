@@ -32,6 +32,25 @@ export interface CoopCommandMessage {
   baton?: boolean | undefined;
 }
 
+/** Which Pokemon (and which choice for it) a reward or purchase was used on. */
+export interface CoopPickTarget {
+  /** Party slot of the Pokemon */
+  slot: number;
+  /** The move or option picked in the party menu, if the item asks for one */
+  option?: number | undefined;
+  /** Second Pokemon, for fusions */
+  splice?: number | undefined;
+}
+
+/** One step of a player's turn in the shop, as sent to the other client. */
+export type CoopShopAction =
+  | { kind: "reward"; cursor: number; target?: CoopPickTarget | undefined }
+  | { kind: "buy"; rowCursor: number; cursor: number; target?: CoopPickTarget | undefined }
+  | { kind: "reroll" }
+  | { kind: "lock" }
+  | { kind: "transfer"; from: number; item: number; quantity: number; to: number }
+  | { kind: "skip" };
+
 const commandKey = (wave: number, turn: number, seat: CoopSeat) => `${wave}:${turn}:${seat}`;
 
 /**
@@ -53,6 +72,34 @@ class CoopSession {
    * Used for local testing and for exercising co-op logic without a network.
    */
   public hotseat = false;
+
+  /** Called with each shop step this client takes; set by the network layer. */
+  public sendShop: ((action: CoopShopAction) => void) | null = null;
+
+  private readonly shopInbox: CoopShopAction[] = [];
+  private shopWaiter: ((action: CoopShopAction) => void) | null = null;
+
+  /** Hand a shop step from the other client to whoever is waiting for it (or keep it until they ask). */
+  public receiveShop(action: CoopShopAction): void {
+    if (this.shopWaiter) {
+      const waiter = this.shopWaiter;
+      this.shopWaiter = null;
+      waiter(action);
+    } else {
+      this.shopInbox.push(action);
+    }
+  }
+
+  /** Resolves with the next shop step from the other client. */
+  public awaitShopAction(): Promise<CoopShopAction> {
+    const early = this.shopInbox.shift();
+    if (early) {
+      return Promise.resolve(early);
+    }
+    return new Promise(resolve => {
+      this.shopWaiter = resolve;
+    });
+  }
 
   /** Called with each command this client issues; set by the network layer. */
   public send: ((message: CoopCommandMessage) => void) | null = null;
@@ -98,6 +145,9 @@ class CoopSession {
     this.localSeat = 0;
     this.hotseat = false;
     this.send = null;
+    this.sendShop = null;
+    this.shopInbox.length = 0;
+    this.shopWaiter = null;
     this.inbox.clear();
     this.waiting.clear();
   }

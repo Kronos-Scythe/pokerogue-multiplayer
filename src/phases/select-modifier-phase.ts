@@ -26,6 +26,7 @@ import {
   TmModifierType,
 } from "#modifiers/modifier-type";
 import { BattlePhase } from "#phases/battle-phase";
+import { type CoopPickTarget, type CoopSeat, type CoopShopAction, coopSession } from "#system/coop-session";
 import type { ConfirmModeConfig } from "#types/ui-types";
 import type { ModifierSelectUiHandler } from "#ui/modifier-select-ui-handler";
 import { SHOP_OPTIONS_ROW_LIMIT } from "#ui/modifier-select-ui-handler";
@@ -34,6 +35,19 @@ import { NumberHolder } from "#utils/common";
 import i18next from "i18next";
 
 export type ModifierSelectCallback = (rowCursor: number, cursor: number) => boolean;
+
+/**
+ * Whose turn it is in a co-op shop. The two seats pick one reward each from the same set of options,
+ * and the seat that picks first alternates from wave to wave.
+ */
+export interface CoopShopTurn {
+  /** The seat that is choosing */
+  seat: CoopSeat;
+  /** Whether this is the second pick of the shop (nothing follows it) */
+  final: boolean;
+  /** Whether the second pick has been scheduled already */
+  followUpQueued: boolean;
+}
 
 export class SelectModifierPhase extends BattlePhase {
   public readonly phaseName = "SelectModifierPhase";
@@ -44,11 +58,21 @@ export class SelectModifierPhase extends BattlePhase {
 
   private typeOptions: ModifierTypeOption[];
 
+  /** Co-op: whose turn this is (set when the phase starts, and handed on to rerolls and copies) */
+  private coopTurn?: CoopShopTurn | undefined;
+  /** Co-op: the reward or purchase the local player is in the middle of choosing */
+  private pendingPick?: { kind: "reward"; cursor: number } | { kind: "buy"; rowCursor: number; cursor: number };
+  /** Co-op: whether the phase is replaying the other player's step (so nothing is sent back) */
+  private replaying = false;
+  /** Co-op: whether this phase has finished or is about to */
+  private ended = false;
+
   constructor(
     rerollCount = 0,
     modifierTiers?: ModifierTier[],
     customModifierSettings?: CustomModifierSettings,
     isCopy = false,
+    coopTurn?: CoopShopTurn,
   ) {
     super();
 
@@ -56,6 +80,7 @@ export class SelectModifierPhase extends BattlePhase {
     this.modifierTiers = modifierTiers;
     this.customModifierSettings = customModifierSettings;
     this.isCopy = isCopy;
+    this.coopTurn = coopTurn;
   }
 
   start() {
@@ -63,6 +88,14 @@ export class SelectModifierPhase extends BattlePhase {
 
     if (!this.isPlayer()) {
       return false;
+    }
+
+    if (coopSession.enabled) {
+      this.coopTurn ??= {
+        seat: (globalScene.currentBattle.waveIndex % 2) as CoopSeat,
+        final: false,
+        followUpQueued: false,
+      };
     }
 
     if (!this.rerollCount && !this.isCopy) {
@@ -86,7 +119,9 @@ export class SelectModifierPhase extends BattlePhase {
             yesHandler: () => {
               globalScene.ui.revertMode();
               globalScene.ui.setMode(UiMode.MESSAGE);
-              super.end();
+              this.publishShop({ kind: "skip" });
+              this.scheduleCoopFollowUp();
+              this.endNow();
             },
             noHandler: () => this.resetModifierSelect(modifierSelectCallback),
           };
@@ -124,7 +159,131 @@ export class SelectModifierPhase extends BattlePhase {
       }
     };
 
+    if (this.isRemoteTurn()) {
+      this.followRemoteTurn();
+      return;
+    }
+
     this.resetModifierSelect(modifierSelectCallback);
+  }
+
+  /** Co-op: whether the player whose turn it is sits at the other client. */
+  private isRemoteTurn(): boolean {
+    return coopSession.enabled && this.coopTurn != null && !coopSession.controls(this.coopTurn.seat);
+  }
+
+  /** Co-op: send a step of the local player's turn to the other client. */
+  private publishShop(action: CoopShopAction): void {
+    if (coopSession.enabled && !coopSession.hotseat && !this.replaying) {
+      coopSession.sendShop?.(action);
+    }
+  }
+
+  /** Co-op: show that the other player is choosing and replay each of their steps until their turn is over. */
+  private followRemoteTurn(): void {
+    globalScene.ui.setMode(UiMode.MESSAGE);
+    globalScene.ui.showText("Your partner is choosing rewards...", 0);
+    const next = () => {
+      void coopSession.awaitShopAction().then(action => {
+        this.replay(action);
+        if (!this.ended) {
+          next();
+        }
+      });
+    };
+    next();
+  }
+
+  /** Co-op: carry out a step the other player took. */
+  private replay(action: CoopShopAction): void {
+    this.replaying = true;
+    try {
+      switch (action.kind) {
+        case "reward": {
+          const type = this.typeOptions[action.cursor]?.type;
+          if (type) {
+            this.pendingPick = { kind: "reward", cursor: action.cursor };
+            this.applyPick(type, -1, action.target);
+          }
+          break;
+        }
+        case "buy": {
+          const option = this.getShopOption(action.rowCursor, action.cursor);
+          this.pendingPick = { kind: "buy", rowCursor: action.rowCursor, cursor: action.cursor };
+          this.applyPick(option.type, this.getShopCost(option), action.target);
+          break;
+        }
+        case "reroll":
+          this.rerollModifiers();
+          break;
+        case "lock":
+          globalScene.lockModifierTiers = !globalScene.lockModifierTiers;
+          break;
+        case "transfer":
+          this.transferItem(action.from, action.item, action.quantity, action.to);
+          break;
+        case "skip":
+          this.scheduleCoopFollowUp();
+          this.endNow();
+          break;
+      }
+    } finally {
+      this.replaying = false;
+    }
+  }
+
+  /** Apply a reward or purchase the other player chose, on the Pokemon they chose it for. */
+  private applyPick(modifierType: ModifierType, cost: number, target?: CoopPickTarget): void {
+    if (!(modifierType instanceof PokemonModifierType)) {
+      this.applyModifier(modifierType.newModifier()!, cost);
+      return;
+    }
+    const party = globalScene.getPlayerParty();
+    if (target === undefined) {
+      return;
+    }
+    let modifier: Modifier | null;
+    if (modifierType instanceof FusePokemonModifierType) {
+      modifier = modifierType.newModifier(party[target.slot], party[target.splice ?? -1]);
+    } else if (modifierType instanceof PokemonMoveModifierType) {
+      modifier = modifierType.newModifier(party[target.slot], (target.option ?? 0) - PartyOption.MOVE_1);
+    } else if (modifierType instanceof RememberMoveModifierType) {
+      modifier = modifierType.newModifier(party[target.slot], target.option ?? 0);
+    } else {
+      modifier = modifierType.newModifier(party[target.slot]);
+    }
+    if (modifier) {
+      this.applyModifier(modifier, cost, true, target);
+    }
+  }
+
+  /** Co-op: after the first player's pick, let the other player pick from what is left. */
+  private scheduleCoopFollowUp(): void {
+    const turn = this.coopTurn;
+    if (!coopSession.enabled || !turn || turn.final || turn.followUpQueued) {
+      return;
+    }
+    turn.followUpQueued = true;
+    const picked = this.pendingPick?.kind === "reward" ? this.pendingPick.cursor : -1;
+    const remaining = this.typeOptions.filter((_, i) => i !== picked);
+    if (remaining.length === 0) {
+      return;
+    }
+    globalScene.phaseManager.unshiftNew(
+      "SelectModifierPhase",
+      0,
+      undefined,
+      // The second pick cannot reroll: it is a pick from what the first player left
+      { guaranteedModifierTypeOptions: remaining, rerollMultiplier: -1, allowLuckUpgrades: false },
+      true,
+      { seat: turn.seat === 0 ? 1 : 0, final: true, followUpQueued: true },
+    );
+  }
+
+  /** End the phase (and remember that it has ended). */
+  private endNow(): void {
+    this.ended = true;
+    super.end();
   }
 
   // Pick a modifier from among the rewards and apply it
@@ -132,10 +291,11 @@ export class SelectModifierPhase extends BattlePhase {
     if (this.typeOptions.length === 0) {
       globalScene.ui.clearText();
       globalScene.ui.setMode(UiMode.MESSAGE);
-      super.end();
+      this.endNow();
       return true;
     }
     const modifierType = this.typeOptions[cursor].type;
+    this.pendingPick = { kind: "reward", cursor };
     return this.applyChosenModifier(modifierType, -1, modifierSelectCallback);
   }
 
@@ -145,26 +305,34 @@ export class SelectModifierPhase extends BattlePhase {
     cursor: number,
     modifierSelectCallback: ModifierSelectCallback,
   ): boolean {
-    const shopOptions = getPlayerShopModifierTypeOptionsForWave(
-      globalScene.currentBattle.waveIndex,
-      globalScene.getWaveMoneyAmount(1),
-    );
-    const shopOption =
-      shopOptions[
-        rowCursor > 2 || shopOptions.length <= SHOP_OPTIONS_ROW_LIMIT ? cursor : cursor + SHOP_OPTIONS_ROW_LIMIT
-      ];
+    const shopOption = this.getShopOption(rowCursor, cursor);
     const modifierType = shopOption.type;
-    // Apply Black Sludge to healing item cost
-    const healingItemCost = new NumberHolder(shopOption.cost);
-    globalScene.applyModifier(HealShopCostModifier, true, healingItemCost);
-    const cost = healingItemCost.value;
+    const cost = this.getShopCost(shopOption);
 
     if (globalScene.money < cost && !activeOverrides.WAIVE_ROLL_FEE_OVERRIDE) {
       globalScene.ui.playError();
       return false;
     }
 
+    this.pendingPick = { kind: "buy", rowCursor, cursor };
     return this.applyChosenModifier(modifierType, cost, modifierSelectCallback);
+  }
+
+  private getShopOption(rowCursor: number, cursor: number): ModifierTypeOption {
+    const shopOptions = getPlayerShopModifierTypeOptionsForWave(
+      globalScene.currentBattle.waveIndex,
+      globalScene.getWaveMoneyAmount(1),
+    );
+    return shopOptions[
+      rowCursor > 2 || shopOptions.length <= SHOP_OPTIONS_ROW_LIMIT ? cursor : cursor + SHOP_OPTIONS_ROW_LIMIT
+    ];
+  }
+
+  /** The price of a shop option, with Black Sludge applied to healing items */
+  private getShopCost(shopOption: ModifierTypeOption): number {
+    const healingItemCost = new NumberHolder(shopOption.cost);
+    globalScene.applyModifier(HealShopCostModifier, true, healingItemCost);
+    return healingItemCost.value;
   }
 
   // Apply a chosen modifier: do an effect or open the party menu
@@ -192,12 +360,17 @@ export class SelectModifierPhase extends BattlePhase {
       globalScene.ui.playError();
       return false;
     }
+    this.publishShop({ kind: "reroll" });
     globalScene.reroll = true;
     globalScene.phaseManager.unshiftNew(
       "SelectModifierPhase",
       this.rerollCount + 1,
       this.typeOptions.map(o => o.type?.tier).filter(t => t !== undefined) as ModifierTier[],
+      undefined,
+      false,
+      this.coopTurn,
     );
+    this.ended = true;
     globalScene.ui.clearText();
     globalScene.ui.setMode(UiMode.MESSAGE).then(() => super.end());
     if (!activeOverrides.WAIVE_ROLL_FEE_OVERRIDE) {
@@ -211,7 +384,6 @@ export class SelectModifierPhase extends BattlePhase {
 
   // Transfer modifiers among party pokemon
   private openModifierTransferScreen(modifierSelectCallback: ModifierSelectCallback) {
-    const party = globalScene.getPlayerParty();
     globalScene.ui.setModeWithoutClear(
       UiMode.PARTY,
       PartyUiMode.MODIFIER_TRANSFER,
@@ -224,19 +396,14 @@ export class SelectModifierPhase extends BattlePhase {
           && fromSlotIndex !== toSlotIndex
           && itemIndex > -1
         ) {
-          const itemModifiers = globalScene.findModifiers(
-            m => m instanceof PokemonHeldItemModifier && m.isTransferable && m.pokemonId === party[fromSlotIndex].id,
-          ) as PokemonHeldItemModifier[];
-          const itemModifier = itemModifiers[itemIndex];
-          globalScene.tryTransferHeldItemModifier(
-            itemModifier,
-            party[toSlotIndex],
-            true,
-            itemQuantity,
-            undefined,
-            undefined,
-            false,
-          );
+          this.publishShop({
+            kind: "transfer",
+            from: fromSlotIndex,
+            item: itemIndex,
+            quantity: itemQuantity,
+            to: toSlotIndex,
+          });
+          this.transferItem(fromSlotIndex, itemIndex, itemQuantity, toSlotIndex);
         } else {
           this.resetModifierSelect(modifierSelectCallback);
         }
@@ -244,6 +411,24 @@ export class SelectModifierPhase extends BattlePhase {
       PartyUiHandler.FilterItemMaxStacks,
     );
     return true;
+  }
+
+  /** Move held items from one party member to another */
+  private transferItem(fromSlotIndex: number, itemIndex: number, itemQuantity: number, toSlotIndex: number): void {
+    const party = globalScene.getPlayerParty();
+    const itemModifiers = globalScene.findModifiers(
+      m => m instanceof PokemonHeldItemModifier && m.isTransferable && m.pokemonId === party[fromSlotIndex].id,
+    ) as PokemonHeldItemModifier[];
+    const itemModifier = itemModifiers[itemIndex];
+    globalScene.tryTransferHeldItemModifier(
+      itemModifier,
+      party[toSlotIndex],
+      true,
+      itemQuantity,
+      undefined,
+      undefined,
+      false,
+    );
   }
 
   // Toggle reroll lock
@@ -254,6 +439,7 @@ export class SelectModifierPhase extends BattlePhase {
       globalScene.ui.playError();
       return false;
     }
+    this.publishShop({ kind: "lock" });
     globalScene.lockModifierTiers = !globalScene.lockModifierTiers;
     const uiHandler = globalScene.ui.getHandler() as ModifierSelectUiHandler;
     uiHandler.setRerollCost(this.getRerollCost(globalScene.lockModifierTiers));
@@ -268,7 +454,14 @@ export class SelectModifierPhase extends BattlePhase {
    * @param cost - The cost of the modifier if it was purchased, or -1 if selected as the modifier reward
    * @param playSound - Whether the 'obtain modifier' sound should be played when adding the modifier.
    */
-  private applyModifier(modifier: Modifier, cost = -1, playSound = false): void {
+  private applyModifier(modifier: Modifier, cost = -1, playSound = false, target?: CoopPickTarget): void {
+    if (this.pendingPick) {
+      this.publishShop({ ...this.pendingPick, target });
+    }
+    const ends = cost === -1 || modifier.type instanceof RememberMoveModifierType;
+    if (ends) {
+      this.scheduleCoopFollowUp();
+    }
     const result = globalScene.addModifier(modifier, false, playSound, undefined, undefined, cost);
     // Queue a copy of this phase when applying a TM or Memory Mushroom.
     // If the player selects either of these, then escapes out of consuming them,
@@ -285,14 +478,16 @@ export class SelectModifierPhase extends BattlePhase {
           globalScene.animateMoneyChanged(false);
         }
         audioManager.playSound("se/buy");
-        (globalScene.ui.getHandler() as ModifierSelectUiHandler).updateCostText();
+        if (!this.replaying) {
+          (globalScene.ui.getHandler() as ModifierSelectUiHandler).updateCostText();
+        }
       } else {
         globalScene.ui.playError();
       }
     } else {
       globalScene.ui.clearText();
       globalScene.ui.setMode(UiMode.MESSAGE);
-      super.end();
+      this.endNow();
     }
   }
 
@@ -316,7 +511,7 @@ export class SelectModifierPhase extends BattlePhase {
         ) {
           globalScene.ui.setMode(UiMode.MODIFIER_SELECT, this.isPlayer()).then(() => {
             const modifier = modifierType.newModifier(party[fromSlotIndex], party[spliceSlotIndex])!; //TODO: is the bang correct?
-            this.applyModifier(modifier, cost, true);
+            this.applyModifier(modifier, cost, true, { slot: fromSlotIndex, splice: spliceSlotIndex });
           });
         } else {
           this.resetModifierSelect(modifierSelectCallback);
@@ -359,7 +554,10 @@ export class SelectModifierPhase extends BattlePhase {
               : isRememberMoveModifier
                 ? modifierType.newModifier(party[slotIndex], option as number)
                 : modifierType.newModifier(party[slotIndex]);
-            this.applyModifier(modifier!, cost, true); // TODO: is the bang correct?
+            this.applyModifier(modifier!, cost, true, {
+              slot: slotIndex,
+              option: isMoveModifier || isRememberMoveModifier ? (option as number) : undefined,
+            }); // TODO: is the bang correct?
           });
         } else {
           this.resetModifierSelect(modifierSelectCallback);
@@ -477,6 +675,7 @@ export class SelectModifierPhase extends BattlePhase {
         allowLuckUpgrades: false,
       },
       true,
+      this.coopTurn,
     );
   }
 

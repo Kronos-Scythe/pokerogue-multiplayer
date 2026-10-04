@@ -90,6 +90,12 @@ describe("Co-op switching and wipes", () => {
     }
   }
 
+  /** A co-op shop has two turns, so skip the first one here and let the harness skip the second */
+  async function toNextWaveCoop() {
+    game.doSelectModifier();
+    await game.toNextWave();
+  }
+
   describe("a faint in a team that still has Pokemon", () => {
     it("lets that team refill the slot from its own bench", async () => {
       await enemyKnocksOutSlotZero();
@@ -157,7 +163,7 @@ describe("Co-op switching and wipes", () => {
       // next wave: seat 0 is still wiped, so only seat 1 takes the field
       game.move.use(MoveId.SPLASH, 1);
       koEnemies();
-      await game.toNextWave();
+      await toNextWaveCoop();
       expect(game.scene.getPlayerField(true)).toHaveLength(1);
       expect(game.scene.getPlayerField(true)[0].owner).toBe(1);
       expect(party()[0].owner).toBe(0);
@@ -170,7 +176,7 @@ describe("Co-op switching and wipes", () => {
 
       game.move.use(MoveId.SPLASH, 1);
       koEnemies();
-      await game.toNextWave();
+      await toNextWaveCoop();
 
       const active = game.scene.getPlayerField(true);
       expect(active).toHaveLength(2);
