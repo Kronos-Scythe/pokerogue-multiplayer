@@ -46,7 +46,14 @@ confirmed. The host is seat 0 and the guest is seat 1.
 
 Without an account, the game keeps its saves, Pokedex and unlocks in the browser, under a profile name. The default is
 `Guest`. Add `?profile=Nickname` to the page address to play as another profile (for example
-`http://localhost:8000/?profile=Matheus`); the browser remembers the choice, so later visits keep using it. Each
+`http://localhost:8000/?profile=Matheus`), or use **Profile: Name** in the in-game menu (from the title screen; the page
+reloads into the new profile). The browser remembers the choice, so later visits keep using it. Each
 profile is separate, and the title screen shows "Logged in as: Nickname". Saves belong to the browser and the page
 address (`localhost` and an IP address are different), so a friend on another computer has his own profile and
 Pokedex. Co-op runs are never saved.
+
+## Leaving a run
+
+**Leave co-op run** in the menu ends the run and goes back to the title screen (nothing is saved). If either player
+quits, closes the tab or loses the connection, the other player sees "Your partner left the game" and is taken back
+to the title screen too.

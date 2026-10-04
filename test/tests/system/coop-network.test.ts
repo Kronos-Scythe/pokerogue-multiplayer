@@ -18,6 +18,17 @@ class FakeRelay {
     return socket;
   }
 
+  /** Like the real relay: when one player goes, the other is told */
+  leave(socket: FakeSocket) {
+    for (const entry of this.rooms.values()) {
+      if (entry.host === socket) {
+        entry.guest?.receive({ type: "peer-left" });
+      } else if (entry.guest === socket) {
+        entry.host.receive({ type: "peer-left" });
+      }
+    }
+  }
+
   handle(from: FakeSocket, text: string) {
     const message = JSON.parse(text);
     if (message.type === "host") {
@@ -55,6 +66,7 @@ class FakeSocket implements CoopSocket {
   }
   close() {
     this.readyState = 3;
+    this.relay.leave(this);
   }
   receive(message: object) {
     setTimeout(() => this.onmessage?.({ data: JSON.stringify(message) }), 0);
@@ -172,6 +184,20 @@ describe("co-op connection", () => {
     expect(guestSetup.owners).toEqual([0, 0, 1]);
     // luck travels with each starter
     expect(guestSetup.starters.map(s => s.luck)).toEqual([0, 1, 2]);
+  });
+
+  it("tells the other player when their partner quits in the middle of a run", async () => {
+    const hosting = host.connect({ server: "ws://relay", role: "host", room: "QUIT" });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await Promise.all([hosting, guest.connect({ server: "ws://relay", role: "join", room: "QUIT" })]);
+
+    let left = 0;
+    host.onPartnerLeft = () => left++;
+    guest.disconnect();
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    expect(left).toBe(1);
+    expect(host.connected).toBe(false);
   });
 
   it("reports a missing room", async () => {

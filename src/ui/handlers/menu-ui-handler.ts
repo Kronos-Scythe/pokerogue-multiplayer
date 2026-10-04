@@ -9,6 +9,9 @@ import { Button } from "#enums/buttons";
 import { GameDataType } from "#enums/game-data-type";
 import { TextStyle } from "#enums/text-style";
 import { UiMode } from "#enums/ui-mode";
+import { leaveCoopRun } from "#system/coop-exit";
+import { coopSession } from "#system/coop-session";
+import { setLocalProfileName } from "#system/local-profile";
 import type { ConfirmModeConfig, OptionSelectItem, OptionSelectModeConfig } from "#types/ui-types";
 import type { AwaitableUiHandler } from "#ui/awaitable-ui-handler";
 import { BgmBar } from "#ui/bgm-bar";
@@ -35,6 +38,7 @@ enum MenuOptions {
   POKEDEX,
   MANAGE_DATA,
   COMMUNITY,
+  PROFILE,
   SAVE_AND_QUIT,
   LOG_OUT,
 }
@@ -68,6 +72,8 @@ export class MenuUiHandler extends OptionSelectUiHandler {
         options: [MenuOptions.EGG_GACHA, MenuOptions.EGG_LIST],
       },
       { excluded: bypassLogin, options: [MenuOptions.LOG_OUT] },
+      // Local profiles only exist when playing without an account
+      { excluded: !bypassLogin, options: [MenuOptions.PROFILE] },
       { excluded: !globalScene.currentBattle, options: [MenuOptions.SAVE_AND_QUIT] },
     ];
   }
@@ -165,6 +171,17 @@ export class MenuUiHandler extends OptionSelectUiHandler {
     return true;
   }
 
+  /** The text shown for a menu option. The options this fork adds have no translations, so they are written out. */
+  private getMenuOptionLabel(option: MenuOptions): string {
+    if (option === MenuOptions.PROFILE) {
+      return `Profile: ${loggedInUser?.username ?? "Guest"}`;
+    }
+    if (option === MenuOptions.SAVE_AND_QUIT && coopSession.enabled) {
+      return "Leave co-op run";
+    }
+    return `${i18next.t(`menuUiHandler:${toCamelCase(MenuOptions[option])}`)}`;
+  }
+
   private getMenuOptionsConfig(): OptionSelectModeConfig {
     const validOptions = getEnumValues(MenuOptions).filter(
       m => !this.excludedMenus().some(em => em.excluded && em.options.includes(m)),
@@ -172,7 +189,7 @@ export class MenuUiHandler extends OptionSelectUiHandler {
 
     const options: OptionSelectItem[] = validOptions.map((option: MenuOptions) => {
       return {
-        label: `${i18next.t(`menuUiHandler:${toCamelCase(MenuOptions[option])}`)}`,
+        label: this.getMenuOptionLabel(option),
         handler: () => this.optionSelected(option),
         keepOpen: true,
       };
@@ -654,6 +671,27 @@ export class MenuUiHandler extends OptionSelectUiHandler {
         ui.setOverlayMode(UiMode.MENU_OPTION_SELECT, this.communityConfig);
         success = true;
         break;
+      case MenuOptions.PROFILE: {
+        if (globalScene.currentBattle || coopSession.enabled) {
+          ui.showText("Go back to the title screen to change profile.", null, () => ui.showText("", 0), 1500);
+          break;
+        }
+        success = true;
+        ui.setOverlayMode(UiMode.PROFILE_NAME, {
+          buttonActions: [
+            (name: string) => {
+              // The page reloads, so the game starts again from that profile's saves
+              if (setLocalProfileName(name, localStorage)) {
+                window.location.reload();
+              } else {
+                ui.revertMode();
+              }
+            },
+            () => ui.revertMode(),
+          ],
+        });
+        break;
+      }
       case MenuOptions.SAVE_AND_QUIT: {
         if (!globalScene.currentBattle) {
           break;
@@ -662,10 +700,13 @@ export class MenuUiHandler extends OptionSelectUiHandler {
         const doSaveQuit = () => {
           ui.setMode(UiMode.LOADING, {
             buttonActions: [],
+            // Co-op runs are never saved (there is nothing to save), so leaving one just goes back to the title screen
             fadeOut: () =>
-              globalScene.gameData.saveAll(true, true, true, true).then(() => {
-                globalScene.reset(true);
-              }),
+              coopSession.enabled
+                ? Promise.resolve().then(() => leaveCoopRun())
+                : globalScene.gameData.saveAll(true, true, true, true).then(() => {
+                    globalScene.reset(true);
+                  }),
           });
         };
 

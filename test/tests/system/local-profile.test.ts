@@ -1,4 +1,4 @@
-import { getLocalProfileName } from "#system/local-profile";
+import { getLocalProfileName, isValidProfileName, setLocalProfileName } from "#system/local-profile";
 import { describe, expect, it } from "vitest";
 
 const memoryStorage = () => {
@@ -39,5 +39,26 @@ describe("getLocalProfileName", () => {
     };
     expect(getLocalProfileName("?profile=Matheus", broken)).toBe("Matheus");
     expect(getLocalProfileName("", broken)).toBe("Guest");
+  });
+});
+
+describe("setLocalProfileName", () => {
+  it("stores a cleaned-up name that getLocalProfileName then returns", () => {
+    const storage = memoryStorage();
+    expect(setLocalProfileName("  Ma theus!  ", storage)).toBe("Matheus");
+    expect(getLocalProfileName("", storage)).toBe("Matheus");
+  });
+
+  it("refuses names with nothing usable in them and keeps the old profile", () => {
+    const storage = memoryStorage();
+    setLocalProfileName("Matheus", storage);
+    expect(setLocalProfileName("!!!", storage)).toBeNull();
+    expect(getLocalProfileName("", storage)).toBe("Matheus");
+  });
+
+  it("tells whether a name can be used exactly as typed", () => {
+    expect(isValidProfileName("Matheus_2")).toBe(true);
+    expect(isValidProfileName("Ma theus")).toBe(false);
+    expect(isValidProfileName("   ")).toBe(false);
   });
 });

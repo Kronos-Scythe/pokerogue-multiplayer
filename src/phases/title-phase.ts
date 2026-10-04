@@ -19,6 +19,7 @@ import { Unlockables } from "#enums/unlockables";
 import { getBiomeKey } from "#field/arena";
 import type { Modifier } from "#modifiers/modifier";
 import { getDailyRunStarterModifiers, regenerateModifierPoolThresholds } from "#modifiers/modifier-type";
+import { leaveCoopRun } from "#system/coop-exit";
 import { coopNetwork } from "#system/coop-network";
 import { coopSession } from "#system/coop-session";
 import { type CoopUrlConfig, getCoopTitleConfigs } from "#system/coop-url";
@@ -219,11 +220,8 @@ export class TitlePhase extends Phase {
     ui.clearText();
     ui.showText("Connecting to the relay server...", 0);
     coopNetwork.onStatus = text => ui.showText(text, 0);
-    coopNetwork.onPartnerLeft = () => {
-      ui.setMode(UiMode.MESSAGE).then(() =>
-        ui.showText("Your partner left the game. Reload the page to start a new run.", 0),
-      );
-    };
+    // Whenever the partner leaves (or the connection drops), end the run instead of waiting forever
+    coopNetwork.onPartnerLeft = () => leaveCoopRun("Your partner left the game. Back to the title screen...");
     coopNetwork.onDesync = (wave, turn) => {
       console.error(`Co-op desync at wave ${wave}, turn ${turn}`);
       globalScene.phaseManager.queueMessage(

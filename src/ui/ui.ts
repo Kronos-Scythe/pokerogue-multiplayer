@@ -45,6 +45,7 @@ import { PartyUiHandler } from "#ui/party-ui-handler";
 import { PokedexPageUiHandler } from "#ui/pokedex-page-ui-handler";
 import { PokedexScanUiHandler } from "#ui/pokedex-scan-ui-handler";
 import { PokedexUiHandler } from "#ui/pokedex-ui-handler";
+import { ProfileNameFormUiHandler } from "#ui/profile-name-form-ui-handler";
 import { RegistrationFormUiHandler } from "#ui/registration-form-ui-handler";
 import { RenameFormUiHandler } from "#ui/rename-form-ui-handler";
 import { RenameRunFormUiHandler } from "#ui/rename-run-ui-handler";
@@ -101,6 +102,7 @@ const noTransitionModes = [
   UiMode.UNAVAILABLE,
   UiMode.RENAME_POKEMON,
   UiMode.RENAME_RUN,
+  UiMode.PROFILE_NAME,
   UiMode.TEST_DIALOGUE,
   UiMode.AUTO_COMPLETE,
   UiMode.ADMIN,
@@ -183,6 +185,7 @@ export class UI extends Phaser.GameObjects.Container {
       new MysteryEncounterUiHandler(),
       new ChangePasswordFormUiHandler(),
       new AlertModalUiHandler(),
+      new ProfileNameFormUiHandler(),
     ];
   }
 

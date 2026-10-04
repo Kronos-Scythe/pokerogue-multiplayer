@@ -10,6 +10,23 @@ function cleanProfileName(name: string | null | undefined): string | null {
   return cleaned.length > 0 ? cleaned.slice(0, 20) : null;
 }
 
+/** Whether a name can be used as a profile name as typed (no characters would be dropped). */
+export function isValidProfileName(name: string): boolean {
+  return cleanProfileName(name) === name.trim() && name.trim().length > 0;
+}
+
+/**
+ * Remember a profile name as the one to play as from now on.
+ * @returns The name as stored (cleaned up), or `null` if it holds nothing usable
+ */
+export function setLocalProfileName(name: string, storage: Pick<Storage, "setItem">): string | null {
+  const cleaned = cleanProfileName(name);
+  if (cleaned) {
+    storage.setItem(PROFILE_STORAGE_KEY, cleaned);
+  }
+  return cleaned;
+}
+
 /**
  * The name of the local profile to play as when the game runs without an account.
  *
