@@ -36,6 +36,14 @@ same machine as the page, on port 8787. A page served over `https` can only use 
 Pick **Co-op** in the title menu on both sides. Each player then picks 3 starters; the run starts once both have
 confirmed. The host is seat 0 and the guest is seat 1.
 
+## If the page stays purple and the console says "Cannot create WebGL context"
+
+The network is fine; the friend's browser cannot start graphics (the game needs WebGL). Fixes, in order:
+
+1. Turn on hardware acceleration: Firefox > Settings > General > Performance (untick "Use recommended performance settings", tick "Use hardware acceleration when available"); Chrome/Edge > Settings > System > "Use graphics acceleration when available". Restart the browser.
+2. Try another browser (Chrome or Edge usually works when Firefox does not).
+3. Update the graphics driver. Check `about:support` (Firefox) or `chrome://gpu` for what is blocked.
+
 ## If the page loads forever for your friend
 
 **First try `pnpm coop:fast`.** It builds the game once (about a minute) and serves the built copy, which is a handful of
