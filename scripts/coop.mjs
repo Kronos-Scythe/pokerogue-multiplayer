@@ -3,6 +3,7 @@
 //        pnpm coop:fast     (serves a built copy: much quicker to load for a friend over a VPN)
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { connect } from "node:net";
 import { networkInterfaces } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -79,28 +80,56 @@ for (const child of children) {
 }
 
 // Tell the players which addresses to use
-setTimeout(() => {
-  const addresses = Object.values(networkInterfaces())
-    .flat()
-    .filter(net => net && net.family === "IPv4" && !net.internal)
-    .map(net => net.address);
-  console.log("\n[coop] ================ Co-op is running ================");
-  console.log(
-    "[coop] You:      open the game page (Vite prints its Local address above, usually http://localhost:8000)",
-  );
-  console.log("[coop]           and pick 'Co-op: host a game'.");
-  for (const address of addresses) {
-    console.log(`[coop] Friend:   http://${address}:<the same port>/   then 'Co-op: join a game'`);
-  }
-  console.log("[coop] Use the address that matches your VPN (for example Radmin/Hamachi/Tailscale).");
-  console.log("[coop] The relay is on port " + relayPort + "; allow it and the game port through the firewall.");
-  if (isWindows) {
+setTimeout(
+  () => {
+    const addresses = Object.values(networkInterfaces())
+      .flat()
+      .filter(net => net && net.family === "IPv4" && !net.internal)
+      .map(net => net.address);
+    console.log("\n[coop] ================ Co-op is running ================");
     console.log(
-      "[coop] If your friend's page loads forever, Windows Firewall is blocking it. In PowerShell as Administrator:",
+      "[coop] You:      open the game page (Vite prints its Local address above, usually http://localhost:8000)",
     );
-    console.log(
-      `[coop]   New-NetFirewallRule -DisplayName "PokeRogue co-op" -Direction Inbound -Protocol TCP -LocalPort 8000,${relayPort} -Action Allow -Profile Any`,
-    );
-  }
-  console.log("[coop] =======================================================\n");
-}, 4000);
+    console.log("[coop]           and pick 'Co-op: host a game'.");
+    for (const address of addresses) {
+      console.log(`[coop] Friend:   http://${address}:<the same port>/   then 'Co-op: join a game'`);
+    }
+    console.log("[coop] Use the address that matches your VPN (for example Radmin/Hamachi/Tailscale).");
+    console.log("[coop] The relay is on port " + relayPort + "; allow it and the game port through the firewall.");
+    if (isWindows) {
+      console.log(
+        "[coop] If your friend's page loads forever, Windows Firewall is blocking it. In PowerShell as Administrator:",
+      );
+      console.log(
+        `[coop]   New-NetFirewallRule -DisplayName "PokeRogue co-op" -Direction Inbound -Protocol TCP -LocalPort 8000,${relayPort} -Action Allow -Profile Any`,
+      );
+    }
+    console.log("[coop] =======================================================\n");
+    // Check each address the way a friend would reach it, so a problem shows up here and not as a blank page there
+    const pagePort = Number(process.env.VITE_PORT ?? 8000);
+    const probe = (host, port) =>
+      new Promise(resolve => {
+        const socket = connect({ host, port, timeout: 3000 });
+        socket.once("connect", () => (socket.destroy(), resolve(true)));
+        socket.once("timeout", () => (socket.destroy(), resolve(false)));
+        socket.once("error", () => resolve(false));
+      });
+    const check = async () => {
+      for (const address of addresses) {
+        const page = await probe(address, pagePort);
+        const relay = await probe(address, Number(relayPort));
+        console.log(
+          `[coop] Self-check ${address}: page(${pagePort}) ${page ? "OK" : "NOT REACHABLE"}, relay(${relayPort}) ${relay ? "OK" : "NOT REACHABLE"}`,
+        );
+      }
+      console.log(
+        "[coop] OK here still means 'reachable from this PC'. If your friend sees a blank page, send a screenshot of",
+      );
+      console.log(
+        "[coop] their browser console (F12 > Console) and Network tab (red lines) so the real cause can be found.",
+      );
+    };
+    void check();
+  },
+  fast ? 6000 : 4000,
+);
