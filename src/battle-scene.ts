@@ -1491,6 +1491,12 @@ export class BattleScene extends SceneBase {
       return doubleBattleOverride;
     }
 
+    // Co-op: every fight is a double so that both seats get a field slot, including the
+    // finale, endless bosses and mystery encounters that are normally always single battles
+    if (coopSession.enabled) {
+      return true;
+    }
+
     // Edge cases
     if (
       this.gameMode.isWaveFinal(waveIndex) // Endless bosses and classic mode finales are never double battles
@@ -1498,11 +1504,6 @@ export class BattleScene extends SceneBase {
       || battleType === BattleType.MYSTERY_ENCOUNTER // MEs are never double battles
     ) {
       return false;
-    }
-
-    // Co-op: every remaining fight is a double so that both seats get a field slot
-    if (coopSession.enabled) {
-      return true;
     }
 
     if (forcedDouble != null) {

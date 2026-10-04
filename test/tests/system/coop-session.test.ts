@@ -1,3 +1,4 @@
+import { generateRandomStatusEffect } from "#data/status-effect";
 import { AbilityId } from "#enums/ability-id";
 import { MoveId } from "#enums/move-id";
 import { SpeciesId } from "#enums/species-id";
@@ -125,6 +126,24 @@ describe("Co-op session", () => {
       expect(species()).toHaveLength(6);
       expect(species(0)).toEqual([SpeciesId.BULBASAUR, SpeciesId.CHARMANDER, SpeciesId.PIKACHU]);
       expect(species(1)).toEqual([SpeciesId.SQUIRTLE, SpeciesId.EEVEE, SpeciesId.MAGIKARP]);
+    });
+  });
+
+  describe("seeded randomness", () => {
+    /** Reseed the generator, then roll a long sequence of random statuses. */
+    const rollWithSeed = () => {
+      Phaser.Math.RND.sow(["coop-seed"]);
+      return Array.from({ length: 24 }, () => generateRandomStatusEffect());
+    };
+
+    it("rolls identical statuses from the same seed in co-op", () => {
+      coopSession.start({ localSeat: 0, hotseat: true });
+      expect(rollWithSeed()).toEqual(rollWithSeed());
+    });
+
+    it("keeps rolling unseeded outside co-op", () => {
+      // 24 rolls of 6 outcomes matching twice by chance is ~1 in 10^18
+      expect(rollWithSeed()).not.toEqual(rollWithSeed());
     });
   });
 });

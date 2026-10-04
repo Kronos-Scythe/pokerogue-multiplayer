@@ -45,6 +45,7 @@ import { showEncounterText } from "#mystery-encounters/encounter-dialogue-utils"
 import type { MysteryEncounter } from "#mystery-encounters/mystery-encounter";
 import type { MysteryEncounterOption } from "#mystery-encounters/mystery-encounter-option";
 import type { Variant } from "#sprites/variant";
+import { coopSession } from "#system/coop-session";
 import type { PokemonData } from "#system/pokemon-data";
 import type { TrainerConfig } from "#trainers/trainer-config";
 import { trainerConfigs } from "#trainers/trainer-config";
@@ -142,7 +143,9 @@ export async function initBattleWithEnemyConfig(partyConfig: EnemyPartyConfig): 
 
   const battle: Battle = globalScene.currentBattle;
 
-  let doubleBattle: boolean = partyConfig?.doubleBattle ?? false;
+  // Co-op: every fight is a double so that both seats get a field slot
+  const forceDouble = coopSession.enabled;
+  let doubleBattle: boolean = forceDouble || (partyConfig?.doubleBattle ?? false);
 
   // Trainer
   const trainerType = partyConfig?.trainerType;
@@ -157,8 +160,10 @@ export async function initBattleWithEnemyConfig(partyConfig: EnemyPartyConfig): 
 
     trainerConfig = partyTrainerConfig ? partyTrainerConfig : trainerConfigs[trainerType!];
 
-    const doubleTrainer = trainerConfig.doubleOnly || (trainerConfig.hasDouble && !!partyConfig.doubleBattle);
-    doubleBattle = doubleTrainer;
+    // In co-op, trainers without a double variant still send out two Pokemon (as they do in regular waves)
+    const doubleTrainer =
+      trainerConfig.doubleOnly || (trainerConfig.hasDouble && (forceDouble || !!partyConfig.doubleBattle));
+    doubleBattle = forceDouble || doubleTrainer;
     const trainerFemale = partyConfig.female == null ? !!randSeedInt(2) : partyConfig.female;
     const newTrainer = new Trainer(
       trainerConfig.trainerType,

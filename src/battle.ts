@@ -21,6 +21,7 @@ import { Trainer } from "#field/trainer";
 import { MoneyMultiplierModifier, type PokemonHeldItemModifier } from "#modifiers/modifier";
 import type { CustomModifierSettings } from "#modifiers/modifier-type";
 import type { MysteryEncounter } from "#mystery-encounters/mystery-encounter";
+import { coopSession } from "#system/coop-session";
 import { trainerConfigs } from "#trainers/trainer-config";
 import type { NewBattleResolvedProps } from "#types/new-battle-props";
 import type { TurnMove } from "#types/turn-move";
@@ -589,7 +590,9 @@ export function getRandomTrainerFunc(
 
     let trainerGender = TrainerVariant.DEFAULT;
     if (randomGender) {
-      trainerGender = randInt(2) === 0 ? TrainerVariant.FEMALE : TrainerVariant.DEFAULT;
+      // Co-op uses the seeded generator so that both clients pick the same variant
+      trainerGender =
+        (coopSession.enabled ? randSeedInt(2) : randInt(2)) === 0 ? TrainerVariant.FEMALE : TrainerVariant.DEFAULT;
     }
 
     /* 1/3 chance for evil team grunts to be double battles */
@@ -608,7 +611,10 @@ export function getRandomTrainerFunc(
     const isEvilTeamGrunt = evilTeamGrunts.includes(choice);
 
     if (trainerConfigs[choice].hasDouble && isEvilTeamGrunt) {
-      return new Trainer(choice, randInt(3) === 0 ? TrainerVariant.DOUBLE : trainerGender);
+      return new Trainer(
+        choice,
+        (coopSession.enabled ? randSeedInt(3) : randInt(3)) === 0 ? TrainerVariant.DOUBLE : trainerGender,
+      );
     }
 
     return new Trainer(choice, trainerGender);
