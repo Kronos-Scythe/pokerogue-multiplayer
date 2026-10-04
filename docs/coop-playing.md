@@ -38,7 +38,12 @@ confirmed. The host is seat 0 and the guest is seat 1.
 
 ## If the page loads forever for your friend
 
-That is almost always the host's firewall dropping the connection (a browser waits on a connection that never answers).
+**First try `pnpm coop:fast`.** It builds the game once (about a minute) and serves the built copy, which is a handful of
+files instead of the thousands the dev server sends. Over a VPN such as Radmin the dev server can take minutes or
+never finish (the tab shows only the page's purple background). Use `pnpm coop:fast --skip-build` to reuse the last build
+(rebuild after changing the code).
+
+If it is still stuck, the cause may be the host's firewall dropping the connection (a browser waits on a connection that never answers).
 The host needs both the game page (port 8000) and the relay (port 8787) reachable:
 
 1. Start with `pnpm coop` (it makes the page reachable from other computers). `pnpm start:dev` alone only serves

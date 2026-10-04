@@ -1,5 +1,6 @@
 // Starts everything needed to play co-op: the relay server and the game page.
-// Usage: pnpm coop   (Ctrl+C stops both)
+// Usage: pnpm coop          (Ctrl+C stops both)
+//        pnpm coop:fast     (serves a built copy: much quicker to load for a friend over a VPN)
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { networkInterfaces } from "node:os";
@@ -21,6 +22,26 @@ if (!existsSync(join(serverDir, "node_modules"))) {
   }
 }
 
+// --fast: serve a built copy of the game instead of the dev server. The dev server sends thousands of small files,
+// which is painfully slow (or never finishes) for a friend on a VPN; the built game is a handful of bundles.
+const fast = process.argv.includes("--fast");
+if (fast && !process.argv.includes("--skip-build")) {
+  console.log("[coop] Building the game (about a minute; use --skip-build to reuse the last build)...");
+  const build = spawnSync("pnpm", ["exec", "vite", "build", "--mode", "coop"], {
+    cwd: root,
+    stdio: "inherit",
+    shell: isWindows,
+  });
+  if (build.status !== 0) {
+    console.error("[coop] The build failed.");
+    process.exit(1);
+  }
+}
+if (fast && !existsSync(join(root, "dist", "index.html"))) {
+  console.error("[coop] There is no build to serve yet: run without --skip-build.");
+  process.exit(1);
+}
+
 const children = [
   spawn(process.execPath, ["index.mjs"], {
     cwd: serverDir,
@@ -29,11 +50,13 @@ const children = [
   }),
   // --host lets other computers (a friend over a VPN or LAN) open the page; --strictPort stops Vite from quietly
   // moving to another port (the friend would then be knocking on the wrong one)
-  spawn("pnpm", ["exec", "vite", "--mode", "development", "--host", "--strictPort"], {
-    cwd: root,
-    stdio: "inherit",
-    shell: isWindows,
-  }),
+  spawn(
+    "pnpm",
+    fast
+      ? ["exec", "vite", "preview", "--mode", "coop", "--host", "--port", "8000", "--strictPort"]
+      : ["exec", "vite", "--mode", "development", "--host", "--strictPort"],
+    { cwd: root, stdio: "inherit", shell: isWindows },
+  ),
 ];
 
 const stopAll = () => {
