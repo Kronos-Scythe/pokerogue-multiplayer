@@ -33,7 +33,9 @@ implementation maps onto the engine, so they survive outside of any one conversa
 Done: seats and ownership, forced doubles everywhere, seeded randomness in co-op, owner-aware switching and faint
 replacement (party menu, forced switches, wave start), the wipe/spectate flow with revive at the shop.
 
-Not done yet: per-seat command input, turn-taking in the shop, and the network layer (relay server and room codes, designed to work over a VPN, LAN or tunnel).
+Per-seat command input is done: each seat's commands are sent as `CoopCommandMessage`s (`src/system/coop-commands.ts`) and the other client applies them. Ball and Run are disabled in co-op for now.
+
+Not done yet: turn-taking in the shop, and the network layer (relay server and room codes, designed to work over a VPN, LAN or tunnel).
 
 ## Known open items
 

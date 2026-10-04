@@ -22,6 +22,8 @@ import { UiMode } from "#enums/ui-mode";
 import type { PlayerPokemon } from "#field/pokemon";
 import { getMoveTargets } from "#moves/move-utils";
 import { FieldPhase } from "#phases/field-phase";
+import { applyRemoteCommand, publishLocalCommand } from "#system/coop-commands";
+import { coopSession } from "#system/coop-session";
 import type { MoveTargetSet } from "#types/move-target-set";
 import type { TurnMove } from "#types/turn-move";
 import i18next from "i18next";
@@ -29,6 +31,10 @@ import i18next from "i18next";
 export class CommandPhase extends FieldPhase {
   public readonly phaseName = "CommandPhase";
   protected fieldIndex: number;
+  /** Whether the current command comes from a queued move instead of the player (never sent to the co-op partner) */
+  private automatic = false;
+  /** Whether a {@linkcode SelectTargetPhase} was queued for this command (it sends the command once targets are set) */
+  private awaitingTargets = false;
 
   /**
    * Whether the command phase is handling a switch command
@@ -153,12 +159,14 @@ export class CommandPhase extends FieldPhase {
     }
 
     const queuedMove = moveQueue[0];
+    this.automatic = true;
     if (queuedMove.move === MoveId.NONE) {
       this.handleCommand(Command.FIGHT, -1);
       return true;
     }
     const moveIndex = playerPokemon.getMoveset().findIndex(m => m.moveId === queuedMove.move);
     if (!isVirtual(queuedMove.useMode) && moveIndex === -1) {
+      this.automatic = false;
       globalScene.ui.setMode(UiMode.COMMAND, this.fieldIndex);
     } else {
       this.handleCommand(Command.FIGHT, moveIndex, queuedMove.useMode, queuedMove);
@@ -188,6 +196,13 @@ export class CommandPhase extends FieldPhase {
       return;
     }
 
+    // Co-op: a Pokemon owned by the other seat takes its command from the other client
+    const pokemon = this.getPokemon();
+    if (coopSession.enabled && pokemon && !coopSession.controls(pokemon.owner)) {
+      this.waitForRemoteCommand(pokemon.owner);
+      return;
+    }
+
     if (
       globalScene.currentBattle.isBattleMysteryEncounter()
       && globalScene.currentBattle.mysteryEncounter?.skipToFightInput
@@ -197,6 +212,19 @@ export class CommandPhase extends FieldPhase {
     } else {
       globalScene.ui.setMode(UiMode.COMMAND, this.fieldIndex);
     }
+  }
+
+  /** Co-op: wait for the other seat's command for this turn, then apply it. */
+  private waitForRemoteCommand(seat: PlayerPokemon["owner"]): void {
+    const { ui } = globalScene;
+    const { waveIndex, turn } = globalScene.currentBattle;
+    ui.setMode(UiMode.MESSAGE);
+    ui.showText("Waiting for your partner...", 0);
+    void coopSession.awaitCommand(waveIndex, turn, seat).then(message => {
+      ui.showText("", 0);
+      applyRemoteCommand(this.fieldIndex, message);
+      this.end();
+    });
   }
 
   /**
@@ -296,6 +324,7 @@ export class CommandPhase extends FieldPhase {
     );
 
     if (moveTargets.targets.length > 1 && moveTargets.multiple) {
+      this.awaitingTargets = true;
       globalScene.phaseManager.unshiftNew("SelectTargetPhase", this.fieldIndex);
     }
 
@@ -308,6 +337,7 @@ export class CommandPhase extends FieldPhase {
     ) {
       turnCommand.move.targets = playerPokemon.getMoveQueue()[0].targets;
     } else {
+      this.awaitingTargets = true;
       globalScene.phaseManager.unshiftNew("SelectTargetPhase", this.fieldIndex);
     }
 
@@ -323,11 +353,16 @@ export class CommandPhase extends FieldPhase {
    * @param key - The i18next key for the text to show
    */
   private queueShowText(key: string): void {
+    this.queueShowRawText(i18next.t(key));
+  }
+
+  /** Same as {@linkcode queueShowText}, for text that is not an i18next key. */
+  private queueShowRawText(text: string): void {
     globalScene.ui.setMode(UiMode.COMMAND, this.fieldIndex);
     globalScene.ui.setMode(UiMode.MESSAGE);
 
     globalScene.ui.showText(
-      i18next.t(key),
+      text,
       null,
       () => {
         globalScene.ui.showText("", 0);
@@ -644,6 +679,12 @@ export class CommandPhase extends FieldPhase {
   ): boolean {
     let success = false;
 
+    // Co-op: one seat's ball or run would also have to cancel the other seat's command, so they are unavailable
+    if (coopSession.enabled && (command === Command.BALL || command === Command.RUN)) {
+      this.queueShowRawText("That isn't available in co-op.");
+      return false;
+    }
+
     switch (command) {
       case Command.TERA:
       case Command.FIGHT:
@@ -662,6 +703,9 @@ export class CommandPhase extends FieldPhase {
     }
 
     if (success) {
+      if (!this.automatic && !this.awaitingTargets) {
+        publishLocalCommand(this.fieldIndex);
+      }
       this.end();
     }
 
@@ -669,6 +713,10 @@ export class CommandPhase extends FieldPhase {
   }
 
   cancel() {
+    // Co-op: the other seat's command has already been sent and cannot be taken back
+    if (coopSession.enabled && !coopSession.hotseat) {
+      return;
+    }
     if (this.fieldIndex) {
       globalScene.phaseManager.unshiftNew("CommandPhase", 0);
       globalScene.phaseManager.unshiftNew("CommandPhase", 1);

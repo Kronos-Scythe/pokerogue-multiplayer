@@ -4,6 +4,7 @@ import type { BattlerIndex } from "#enums/battler-index";
 import { Command } from "#enums/command";
 import { UiMode } from "#enums/ui-mode";
 import { PokemonPhase } from "#phases/pokemon-phase";
+import { publishLocalCommand } from "#system/coop-commands";
 
 export class SelectTargetPhase extends PokemonPhase {
   public readonly phaseName = "SelectTargetPhase";
@@ -61,6 +62,9 @@ export class SelectTargetPhase extends PokemonPhase {
         }
         if (turnCommand.command === Command.BALL && this.fieldIndex) {
           globalScene.currentBattle.turnCommands[this.fieldIndex - 1]!.skip = true;
+        }
+        if (targets.length > 0) {
+          publishLocalCommand(this.fieldIndex);
         }
         this.end();
       },
