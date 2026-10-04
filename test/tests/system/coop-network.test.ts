@@ -1,7 +1,7 @@
 import { type CoopSocket, type CoopStarter, coopNetwork } from "#system/coop-network";
 import { coopSession } from "#system/coop-session";
 import { hashText } from "#system/coop-sync";
-import { parseCoopUrl } from "#system/coop-url";
+import { getCoopTitleConfigs, parseCoopUrl } from "#system/coop-url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 /** A stand-in for the relay server: the same room rules, no sockets */
@@ -74,6 +74,24 @@ const starter = (speciesId: number, luck: number): CoopStarter => ({
   luck,
 });
 
+describe("getCoopTitleConfigs", () => {
+  const page = { protocol: "http:", hostname: "10.0.0.5" };
+
+  it("offers both roles on a plain address, pointing at the relay next to the page", () => {
+    expect(getCoopTitleConfigs("", page).map(c => [c.role, c.server])).toEqual([
+      ["host", "ws://10.0.0.5:8787"],
+      ["join", "ws://10.0.0.5:8787"],
+    ]);
+  });
+
+  it("offers only the asked-for role, and keeps a custom relay", () => {
+    expect(getCoopTitleConfigs("?coop=join&room=ab&server=ws://x:1", page)).toEqual([
+      { role: "join", room: "AB", server: "ws://x:1" },
+    ]);
+    expect(getCoopTitleConfigs("?server=ws://x:1", page).map(c => c.server)).toEqual(["ws://x:1", "ws://x:1"]);
+  });
+});
+
 describe("parseCoopUrl", () => {
   const page = { protocol: "http:", hostname: "192.168.0.5" };
 
@@ -95,8 +113,12 @@ describe("parseCoopUrl", () => {
     });
   });
 
-  it("needs a room code to join, and uses wss on https pages", () => {
-    expect(parseCoopUrl("?coop=join", page)).toBeNull();
+  it("joins without a room code, and uses wss on https pages", () => {
+    expect(parseCoopUrl("?coop=join", page)).toEqual({
+      role: "join",
+      room: undefined,
+      server: "ws://192.168.0.5:8787",
+    });
     expect(parseCoopUrl("?coop=host", { protocol: "https:", hostname: "play.example.com" })?.server).toBe(
       "wss://play.example.com:8787",
     );

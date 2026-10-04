@@ -10,7 +10,7 @@ const CODE_LENGTH = 4;
  *
  * Client -> relay:
  *   { type: "host", room?: string }   open a room (a code is made up when none is given)
- *   { type: "join", room: string }    join a room opened by a host
+ *   { type: "join", room?: string }   join a room opened by a host (without a code: the longest-waiting open room)
  * Relay -> client:
  *   { type: "hosted", room }          the room is open
  *   { type: "joined", room }          you are in the room (the host also gets { type: "peer-joined" })
@@ -100,12 +100,18 @@ export function createRelay(options) {
       }
 
       if (message.type === "join") {
-        const room = typeof message.room === "string" ? message.room.toUpperCase() : "";
+        // Without a code, take the room that has waited longest for a partner (Maps keep insertion order)
+        const openRoom = [...rooms].find(([, candidate]) => !candidate.guest)?.[0];
+        const asked = typeof message.room === "string" ? message.room.toUpperCase() : "";
+        const room = asked || openRoom || "";
         const entry = rooms.get(room);
         if (socket.room) {
           send(socket, { type: "error", message: "Already in a room." });
         } else if (!entry) {
-          send(socket, { type: "error", message: "No room with that code." });
+          send(socket, {
+            type: "error",
+            message: asked ? "No room with that code." : "Nobody is hosting right now. Ask your partner to host first.",
+          });
         } else if (entry.guest) {
           send(socket, { type: "error", message: "That room is full." });
         } else {

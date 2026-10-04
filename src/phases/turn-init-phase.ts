@@ -7,6 +7,7 @@ import {
   handleMysteryEncounterTurnStartEffects,
 } from "#mystery-encounters/encounter-phase-utils";
 import { FieldPhase } from "#phases/field-phase";
+import { coopSession } from "#system/coop-session";
 import i18next from "i18next";
 
 export class TurnInitPhase extends FieldPhase {
@@ -56,7 +57,19 @@ export class TurnInitPhase extends FieldPhase {
       return;
     }
 
-    globalScene.getField().forEach((pokemon, i) => {
+    // Co-op: ask the local player for their commands first, so nobody has to wait for the partner to choose before
+    // they can choose themselves. Commands are stored per field slot, so the order the two games ask in is irrelevant.
+    const fieldOrder = globalScene.getField().map((_, i) => i);
+    if (coopSession.enabled) {
+      const rank = (i: number) => {
+        const pokemon = globalScene.getField()[i];
+        return pokemon?.isPlayer() && !coopSession.controls((pokemon as PlayerPokemon).owner) ? 1 : 0;
+      };
+      fieldOrder.sort((a, b) => rank(a) - rank(b) || a - b);
+    }
+
+    for (const i of fieldOrder) {
+      const pokemon = globalScene.getField()[i];
       if (pokemon?.isActive()) {
         if (pokemon.isPlayer()) {
           globalScene.currentBattle.addParticipant(pokemon as PlayerPokemon);
@@ -70,7 +83,7 @@ export class TurnInitPhase extends FieldPhase {
           globalScene.phaseManager.pushNew("EnemyCommandPhase", i - BattlerIndex.ENEMY);
         }
       }
-    });
+    }
 
     globalScene.phaseManager.pushNew("TurnStartPhase");
 

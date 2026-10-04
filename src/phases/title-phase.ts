@@ -21,7 +21,7 @@ import type { Modifier } from "#modifiers/modifier";
 import { getDailyRunStarterModifiers, regenerateModifierPoolThresholds } from "#modifiers/modifier-type";
 import { coopNetwork } from "#system/coop-network";
 import { coopSession } from "#system/coop-session";
-import { type CoopUrlConfig, parseCoopUrl } from "#system/coop-url";
+import { type CoopUrlConfig, getCoopTitleConfigs } from "#system/coop-url";
 import { vouchers } from "#system/voucher";
 import type { OptionSelectItem, OptionSelectModeConfig } from "#types/ui-types";
 import { SaveSlotUiMode } from "#ui/save-slot-select-ui-handler";
@@ -95,11 +95,17 @@ export class TitlePhase extends Phase {
         },
       });
     }
-    // Co-op is offered when the page address asks for it (?coop=host or ?coop=join&room=CODE)
-    const coopConfig = typeof window === "undefined" ? null : parseCoopUrl(window.location.search, window.location);
-    if (coopConfig) {
+    // Co-op is always offered; the page address can pick the role, room and relay (?coop=join&room=CODE&server=...)
+    const coopConfigs =
+      typeof window === "undefined" ? [] : getCoopTitleConfigs(window.location.search, window.location);
+    for (const coopConfig of coopConfigs) {
       options.push({
-        label: coopConfig.role === "host" ? "Co-op: host a room" : `Co-op: join room ${coopConfig.room}`,
+        label:
+          coopConfig.role === "host"
+            ? "Co-op: host a game"
+            : coopConfig.room
+              ? `Co-op: join room ${coopConfig.room}`
+              : "Co-op: join a game",
         handler: () => {
           this.startCoop(coopConfig);
           return true;

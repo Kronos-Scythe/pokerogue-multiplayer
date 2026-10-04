@@ -1,5 +1,17 @@
 # Playing co-op
 
+## Quick start
+
+```sh
+pnpm coop
+```
+
+This starts the relay and the game page together (Ctrl+C stops both). The host opens the page and picks
+**Co-op: host a game**. The friend opens the host's address (the host's VPN or LAN IP, same port as the page) and
+picks **Co-op: join a game**. No room code is needed: a guest who gives none joins whoever is hosting.
+
+The rest of this page covers running the two parts separately and the address options.
+
 ## 1. Run the relay
 
 The relay pairs the two players by room code. Run it on any machine both players can reach (yours over a VPN such

@@ -49,8 +49,10 @@ export class SelectStarterPhase extends Phase {
       ...starter,
       luck: globalScene.gameData.getDexAttrLuck(globalScene.gameData.dexData[starter.speciesId].caughtAttr),
     }));
-    globalScene.ui.setMode(UiMode.MESSAGE);
-    globalScene.ui.showText("Waiting for your partner to pick their team...", 0);
+    // The text has to wait for the mode change, or the change wipes it and the box stays empty
+    void globalScene.ui
+      .setMode(UiMode.MESSAGE)
+      .then(() => globalScene.ui.showText("Team locked in! Waiting for your partner to pick theirs...", 0));
     coopNetwork.exchangeStarters(mine).then(setup => {
       globalScene.ui.clearText();
       // Both games roll the same dice from here on

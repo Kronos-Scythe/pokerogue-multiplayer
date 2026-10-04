@@ -113,3 +113,87 @@ describe("Co-op command input", () => {
     expect(sent).toHaveLength(0);
   });
 });
+
+describe("Co-op command order", () => {
+  let phaserGame: Phaser.Game;
+  let game: GameManager;
+  let sent: CoopCommandMessage[];
+
+  beforeAll(() => {
+    phaserGame = new Phaser.Game({ type: Phaser.HEADLESS });
+  });
+
+  beforeEach(async () => {
+    game = new GameManager(phaserGame);
+    game.override
+      .ability(AbilityId.BALL_FETCH)
+      .enemyAbility(AbilityId.BALL_FETCH)
+      .enemyMoveset(MoveId.SPLASH)
+      .moveset([MoveId.SPLASH, MoveId.TACKLE])
+      .startingLevel(50)
+      .enemyLevel(5)
+      .criticalHits(false);
+    sent = [];
+    coopSession.start({ localSeat: 1 });
+    coopSession.send = message => sent.push(message);
+    await game.classicMode.startBattle(
+      SpeciesId.BULBASAUR,
+      SpeciesId.SQUIRTLE,
+      SpeciesId.CHARMANDER,
+      SpeciesId.PIKACHU,
+      SpeciesId.EEVEE,
+      SpeciesId.MAGIKARP,
+    );
+    game.scene.getPlayerParty().forEach((p, i) => {
+      p.owner = ([0, 1, 0, 0, 1, 1] as const)[i];
+    });
+  });
+
+  afterEach(() => {
+    coopSession.reset();
+  });
+
+  it("asks the local seat first even when its Pokemon is in the second slot", async () => {
+    // Turn 1 was queued before the seats were assigned, so play it out: slot 0 (seat 0) is the partner's
+    coopSession.receive({
+      wave: game.scene.currentBattle.waveIndex,
+      turn: game.scene.currentBattle.turn,
+      seat: 0,
+      command: Command.FIGHT,
+      cursor: 0,
+      move: MoveId.SPLASH,
+      targets: [BattlerIndex.PLAYER],
+    });
+    game.move.use(MoveId.SPLASH, 1);
+    await game.toNextTurn();
+    sent.length = 0;
+
+    // Turn 2: this client is seat 1, and seat 0 (slot 0) has not chosen yet
+    game.move.use(MoveId.TACKLE, 1, BattlerIndex.ENEMY);
+    let reachedTurnStart = false;
+    const run = game.phaseInterceptor.to("TurnStartPhase", false).then(() => {
+      reachedTurnStart = true;
+    });
+    for (let i = 0; i < 100 && sent.length === 0; i++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+
+    // our choice went out while the partner's slot is still empty
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ seat: 1, move: MoveId.TACKLE });
+    expect(reachedTurnStart).toBe(false);
+    expect(game.scene.currentBattle.turnCommands[0]).toBeFalsy();
+
+    coopSession.receive({
+      wave: game.scene.currentBattle.waveIndex,
+      turn: game.scene.currentBattle.turn,
+      seat: 0,
+      command: Command.FIGHT,
+      cursor: 0,
+      move: MoveId.SPLASH,
+      targets: [BattlerIndex.PLAYER],
+    });
+    await run;
+    expect(game.scene.currentBattle.turnCommands[0]?.move?.move).toBe(MoveId.SPLASH);
+  });
+});

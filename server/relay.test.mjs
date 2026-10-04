@@ -55,6 +55,31 @@ describe("co-op relay", () => {
     assert.deepEqual(await host.next(), { type: "command", n: 2 });
   });
 
+  it("lets a guest without a code join the room that has waited longest", async () => {
+    const first = await client();
+    const second = await client();
+    first.send({ type: "host", room: "FIRSTROOM" });
+    await first.next();
+    second.send({ type: "host", room: "SECONDROOM" });
+    await second.next();
+
+    const guest = await client();
+    guest.send({ type: "join" });
+    assert.deepEqual(await guest.next(), { type: "joined", room: "FIRSTROOM" });
+    assert.deepEqual(await first.next(), { type: "peer-joined" });
+
+    // that room is full now, so the next guest without a code gets the other one
+    const another = await client();
+    another.send({ type: "join" });
+    assert.deepEqual(await another.next(), { type: "joined", room: "SECONDROOM" });
+  });
+
+  it("says so when there is nobody to join", async () => {
+    const guest = await client();
+    guest.send({ type: "join" });
+    assert.match((await guest.next()).message, /hosting/);
+  });
+
   it("rejects unknown and full rooms", async () => {
     const host = await client();
     host.send({ type: "host", room: "TESTROOM" });
