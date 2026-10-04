@@ -13,7 +13,7 @@ implementation maps onto the engine, so they survive outside of any one conversa
 - **A wiped seat spectates.** If a seat's whole team faints, that seat's slot stays empty and the other seat keeps
   fighting. The wiped seat still takes part in the next shop, so it can buy a revive. The run only ends when *both*
   teams are wiped.
-- **Shop picks take turns.** Each wave has one shared shop. The two seats pick one reward each from the same options, so the second seat chooses from what the first left (and cannot reroll). The seat that picks first alternates every wave (`waveIndex % 2`). Money is shared, and the seat whose turn it is can also buy from the shop, reroll or move held items. The other client replays every step as a `CoopShopAction`.
+- **Both players shop at the same time.** Each client opens its own shop with half of the money (the odd coin goes to seat 0), and the halves are added back together when the shop closes. Purchases and held-item moves only affect your own team and are sent to the partner as they happen. Each player then locks in one reward (or skips) and waits for the partner. Both rewards are handed out in the same order on both clients. If both wanted the same reward, the priority seat (`waveIndex % 2`) gets it and the other player picks again from what is left. Reroll and reroll-lock are off in co-op. Hotseat mode still uses the one-screen, take-turns shop.
 
 ## How it maps onto the engine
 
@@ -35,7 +35,7 @@ replacement (party menu, forced switches, wave start), the wipe/spectate flow wi
 
 Per-seat command input is done: each seat's commands are sent as `CoopCommandMessage`s (`src/system/coop-commands.ts`) and the other client applies them. Ball and Run are disabled in co-op for now.
 
-Shop turn-taking is done (`SelectModifierPhase`).
+The simultaneous shop is done (`SelectModifierPhase`).
 
 Not done yet: the network layer (relay server and room codes, designed to work over a VPN, LAN or tunnel).
 

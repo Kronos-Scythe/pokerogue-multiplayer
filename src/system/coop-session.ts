@@ -95,6 +95,11 @@ class CoopSession {
     }
   }
 
+  /** Stop waiting for shop steps (the shop ended), so a leftover wait cannot swallow the next shop's first step. */
+  public cancelShopWait(): void {
+    this.shopWaiter = null;
+  }
+
   /** Resolves with the next shop step from the other client. */
   public awaitShopAction(): Promise<CoopShopAction> {
     const early = this.shopInbox.shift();

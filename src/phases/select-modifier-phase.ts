@@ -30,7 +30,7 @@ import { type CoopPickTarget, type CoopSeat, type CoopShopAction, coopSession } 
 import type { ConfirmModeConfig } from "#types/ui-types";
 import type { ModifierSelectUiHandler } from "#ui/modifier-select-ui-handler";
 import { SHOP_OPTIONS_ROW_LIMIT } from "#ui/modifier-select-ui-handler";
-import { PartyOption, PartyUiHandler } from "#ui/party-ui-handler";
+import { PartyOption, PartyUiHandler, type PokemonSelectFilter } from "#ui/party-ui-handler";
 import { NumberHolder } from "#utils/common";
 import i18next from "i18next";
 
@@ -49,6 +49,12 @@ export interface CoopShopTurn {
   followUpQueued: boolean;
 }
 
+/** A reward choice a player has locked in during the simultaneous co-op shop (`done` once it has been handed out). */
+type CoopLockedPick =
+  | { kind: "reward"; cursor: number; target?: CoopPickTarget | undefined }
+  | { kind: "skip" }
+  | { kind: "done" };
+
 export class SelectModifierPhase extends BattlePhase {
   public readonly phaseName = "SelectModifierPhase";
   private readonly rerollCount: number;
@@ -66,6 +72,13 @@ export class SelectModifierPhase extends BattlePhase {
   private replaying = false;
   /** Co-op: whether this phase has finished or is about to */
   private ended = false;
+  /** Co-op simultaneous shop: each seat's own wallet while the shop is open (they are added back together afterwards) */
+  private budgets: [number, number] = [0, 0];
+  /** Co-op simultaneous shop: the reward choices that have been locked in */
+  private readonly locks = new Map<CoopSeat, CoopLockedPick>();
+  /** Co-op simultaneous shop: where the local player is */
+  private simStage: "picking" | "waiting" | "done" = "picking";
+  private simCallback?: ModifierSelectCallback;
 
   constructor(
     rerollCount = 0,
@@ -119,6 +132,10 @@ export class SelectModifierPhase extends BattlePhase {
             yesHandler: () => {
               globalScene.ui.revertMode();
               globalScene.ui.setMode(UiMode.MESSAGE);
+              if (this.isSimultaneous()) {
+                this.lockLocalPick({ kind: "skip" });
+                return;
+              }
               this.publishShop({ kind: "skip" });
               this.scheduleCoopFollowUp();
               this.endNow();
@@ -133,6 +150,11 @@ export class SelectModifierPhase extends BattlePhase {
       switch (rowCursor) {
         // Execute one of the options from the bottom row
         case 0:
+          // Rerolling and locking rarities would change the rewards for both players, so they are off while shopping together
+          if (this.isSimultaneous() && (cursor === 0 || cursor === 3)) {
+            globalScene.ui.playError();
+            return false;
+          }
           switch (cursor) {
             case 0:
               return this.rerollModifiers();
@@ -159,12 +181,220 @@ export class SelectModifierPhase extends BattlePhase {
       }
     };
 
+    if (this.isSimultaneous()) {
+      this.startSimultaneous(modifierSelectCallback);
+      return;
+    }
+
     if (this.isRemoteTurn()) {
       this.followRemoteTurn();
       return;
     }
 
     this.resetModifierSelect(modifierSelectCallback);
+  }
+
+  /** Co-op: whether both players shop at the same time (two clients), instead of taking turns (one shared screen). */
+  private isSimultaneous(): boolean {
+    return coopSession.enabled && !coopSession.hotseat;
+  }
+
+  /** Co-op simultaneous shop: the seat whose reward wins when both players want the same one (alternates by wave). */
+  private prioritySeat(): CoopSeat {
+    return (globalScene.currentBattle.waveIndex % 2) as CoopSeat;
+  }
+
+  private partnerSeat(): CoopSeat {
+    return coopSession.localSeat === 0 ? 1 : 0;
+  }
+
+  /** Open the shop for the local player with their half of the money, and follow what the partner does in theirs. */
+  private startSimultaneous(callback: ModifierSelectCallback): void {
+    const total = globalScene.money;
+    this.budgets = [Math.ceil(total / 2), Math.floor(total / 2)];
+    globalScene.money = this.budgets[coopSession.localSeat];
+    globalScene.updateMoneyText();
+    this.simCallback = callback;
+    const next = () => {
+      void coopSession.awaitShopAction().then(action => {
+        if (this.ended) {
+          return;
+        }
+        this.onPartnerAction(action);
+        if (!this.ended) {
+          next();
+        }
+      });
+    };
+    next();
+    this.resetModifierSelect(callback);
+  }
+
+  /** Co-op simultaneous shop: something the partner did in their shop. */
+  private onPartnerAction(action: CoopShopAction): void {
+    const partner = this.partnerSeat();
+    switch (action.kind) {
+      case "buy": {
+        const option = this.getShopOption(action.rowCursor, action.cursor);
+        const modifier = this.buildModifier(option.type, action.target);
+        const cost = this.getShopCost(option);
+        if (
+          modifier
+          && globalScene.addModifier(modifier, false, false, undefined, undefined, cost)
+          && !activeOverrides.WAIVE_ROLL_FEE_OVERRIDE
+        ) {
+          this.budgets[partner] -= cost;
+        }
+        break;
+      }
+      case "transfer":
+        this.transferItem(action.from, action.item, action.quantity, action.to);
+        break;
+      case "reward":
+        this.locks.set(partner, { kind: "reward", cursor: action.cursor, target: action.target });
+        this.tryResolve();
+        break;
+      case "skip":
+        this.locks.set(partner, { kind: "skip" });
+        this.tryResolve();
+        break;
+    }
+  }
+
+  /** Co-op simultaneous shop: the local player has made their reward choice. Tell the partner and wait for theirs. */
+  private lockLocalPick(
+    pick: { kind: "reward"; cursor: number; target?: CoopPickTarget | undefined } | { kind: "skip" },
+  ): void {
+    this.locks.set(coopSession.localSeat, pick);
+    this.simStage = "waiting";
+    coopSession.sendShop?.(
+      pick.kind === "skip" ? { kind: "skip" } : { kind: "reward", cursor: pick.cursor, target: pick.target },
+    );
+    if (this.locks.has(this.partnerSeat())) {
+      this.tryResolve();
+      return;
+    }
+    globalScene.ui.setMode(UiMode.MESSAGE).then(() => {
+      if (this.simStage === "waiting" && !this.ended) {
+        globalScene.ui.showText("Waiting for your partner...", 0);
+      }
+    });
+  }
+
+  /**
+   * Co-op simultaneous shop: once both players have locked in, hand the rewards out in the same order on both clients.
+   * If both wanted the same reward, the priority seat gets it and the other player picks again from what is left.
+   */
+  private tryResolve(): void {
+    if (this.ended || this.simStage === "done") {
+      return;
+    }
+    const first = this.prioritySeat();
+    const second: CoopSeat = first === 0 ? 1 : 0;
+    const a = this.locks.get(first);
+    const b = this.locks.get(second);
+    if (!a || !b) {
+      return;
+    }
+    if (a.kind === "reward" && b.kind === "reward" && a.cursor === b.cursor) {
+      this.handOut(a);
+      this.typeOptions.splice(a.cursor, 1);
+      this.locks.set(first, { kind: "done" });
+      this.locks.delete(second);
+      if (this.typeOptions.length === 0) {
+        this.locks.set(second, { kind: "skip" });
+        this.tryResolve();
+      } else if (second === coopSession.localSeat) {
+        this.simStage = "picking";
+        globalScene.ui.showText(
+          "Your partner got that one first. Pick another reward!",
+          null,
+          () => {
+            this.resetModifierSelect(this.simCallback!);
+          },
+          1500,
+        );
+      }
+      return;
+    }
+    this.handOut(a);
+    this.handOut(b);
+    this.finishSimultaneous();
+  }
+
+  /** Give a locked-in reward to its player's Pokemon. */
+  private handOut(pick: CoopLockedPick): void {
+    if (pick.kind !== "reward") {
+      return;
+    }
+    const type = this.typeOptions[pick.cursor]?.type;
+    const modifier = type ? this.buildModifier(type, pick.target) : null;
+    if (modifier) {
+      globalScene.addModifier(modifier, false, true);
+    }
+  }
+
+  private finishSimultaneous(): void {
+    this.simStage = "done";
+    coopSession.cancelShopWait();
+    globalScene.money = this.budgets[0] + this.budgets[1];
+    globalScene.updateMoneyText();
+    globalScene.ui.clearText();
+    globalScene.ui.setMode(UiMode.MESSAGE);
+    this.endNow();
+  }
+
+  /** Co-op simultaneous shop: the local player buys something from the shop with their own money. */
+  private purchaseSimultaneous(modifier: Modifier, cost: number, target?: CoopPickTarget): void {
+    const pick = this.pendingPick;
+    const result = globalScene.addModifier(modifier, false, false, undefined, undefined, cost);
+    if (!result || pick?.kind !== "buy") {
+      globalScene.ui.playError();
+      return;
+    }
+    if (!activeOverrides.WAIVE_ROLL_FEE_OVERRIDE) {
+      this.budgets[coopSession.localSeat] -= cost;
+      globalScene.money = this.budgets[coopSession.localSeat];
+      globalScene.updateMoneyText();
+      globalScene.animateMoneyChanged(false);
+    }
+    audioManager.playSound("se/buy");
+    coopSession.sendShop?.({ kind: "buy", rowCursor: pick.rowCursor, cursor: pick.cursor, target });
+    (globalScene.ui.getHandler() as ModifierSelectUiHandler).updateCostText();
+  }
+
+  /** In the simultaneous shop, only a player's own Pokemon can be picked. */
+  private ownTeamFilter(base?: PokemonSelectFilter): PokemonSelectFilter | undefined {
+    if (!this.isSimultaneous()) {
+      return base;
+    }
+    return pokemon => {
+      if (pokemon.owner !== coopSession.localSeat) {
+        return "Only your own team!";
+      }
+      return base ? base(pokemon) : null;
+    };
+  }
+
+  /** Build the modifier a reward or purchase gives, for the Pokemon chosen in `target` if it needs one. */
+  private buildModifier(modifierType: ModifierType, target?: CoopPickTarget): Modifier | null {
+    if (!(modifierType instanceof PokemonModifierType)) {
+      return modifierType.newModifier();
+    }
+    const party = globalScene.getPlayerParty();
+    if (target === undefined) {
+      return null;
+    }
+    if (modifierType instanceof FusePokemonModifierType) {
+      return modifierType.newModifier(party[target.slot], party[target.splice ?? -1]);
+    }
+    if (modifierType instanceof PokemonMoveModifierType) {
+      return modifierType.newModifier(party[target.slot], (target.option ?? 0) - PartyOption.MOVE_1);
+    }
+    if (modifierType instanceof RememberMoveModifierType) {
+      return modifierType.newModifier(party[target.slot], target.option ?? 0);
+    }
+    return modifierType.newModifier(party[target.slot]);
   }
 
   /** Co-op: whether the player whose turn it is sits at the other client. */
@@ -238,20 +468,7 @@ export class SelectModifierPhase extends BattlePhase {
       this.applyModifier(modifierType.newModifier()!, cost);
       return;
     }
-    const party = globalScene.getPlayerParty();
-    if (target === undefined) {
-      return;
-    }
-    let modifier: Modifier | null;
-    if (modifierType instanceof FusePokemonModifierType) {
-      modifier = modifierType.newModifier(party[target.slot], party[target.splice ?? -1]);
-    } else if (modifierType instanceof PokemonMoveModifierType) {
-      modifier = modifierType.newModifier(party[target.slot], (target.option ?? 0) - PartyOption.MOVE_1);
-    } else if (modifierType instanceof RememberMoveModifierType) {
-      modifier = modifierType.newModifier(party[target.slot], target.option ?? 0);
-    } else {
-      modifier = modifierType.newModifier(party[target.slot]);
-    }
+    const modifier = this.buildModifier(modifierType, target);
     if (modifier) {
       this.applyModifier(modifier, cost, true, target);
     }
@@ -395,6 +612,9 @@ export class SelectModifierPhase extends BattlePhase {
           && toSlotIndex < 6
           && fromSlotIndex !== toSlotIndex
           && itemIndex > -1
+          && (!this.isSimultaneous()
+            || (globalScene.getPlayerParty()[fromSlotIndex].owner === coopSession.localSeat
+              && globalScene.getPlayerParty()[toSlotIndex].owner === coopSession.localSeat))
         ) {
           this.publishShop({
             kind: "transfer",
@@ -455,6 +675,18 @@ export class SelectModifierPhase extends BattlePhase {
    * @param playSound - Whether the 'obtain modifier' sound should be played when adding the modifier.
    */
   private applyModifier(modifier: Modifier, cost = -1, playSound = false, target?: CoopPickTarget): void {
+    if (this.isSimultaneous()) {
+      if (cost === -1) {
+        this.lockLocalPick({
+          kind: "reward",
+          cursor: this.pendingPick?.kind === "reward" ? this.pendingPick.cursor : -1,
+          target,
+        });
+      } else {
+        this.purchaseSimultaneous(modifier, cost, target);
+      }
+      return;
+    }
     if (this.pendingPick) {
       this.publishShop({ ...this.pendingPick, target });
     }
@@ -517,7 +749,7 @@ export class SelectModifierPhase extends BattlePhase {
           this.resetModifierSelect(modifierSelectCallback);
         }
       },
-      modifierType.selectFilter,
+      this.ownTeamFilter(modifierType.selectFilter),
     );
   }
 
@@ -563,7 +795,7 @@ export class SelectModifierPhase extends BattlePhase {
           this.resetModifierSelect(modifierSelectCallback);
         }
       },
-      pokemonModifierType.selectFilter,
+      this.ownTeamFilter(pokemonModifierType.selectFilter),
       modifierType instanceof PokemonMoveModifierType
         ? (modifierType as PokemonMoveModifierType).moveSelectFilter
         : undefined,

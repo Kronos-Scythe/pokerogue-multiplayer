@@ -72,21 +72,6 @@ describe("Co-op shop", () => {
     }
   }
 
-  const skipPrompt = () => {
-    game.onNextPrompt(
-      "SelectModifierPhase",
-      UiMode.MODIFIER_SELECT,
-      () => {
-        (game.scene.ui.getHandler() as any).processInput(Button.CANCEL);
-      },
-      undefined,
-      true,
-    );
-    game.onNextPrompt("SelectModifierPhase", UiMode.CONFIRM, () => {
-      (game.scene.ui.getHandler() as any).processInput(Button.ACTION);
-    });
-  };
-
   it("gives each seat one pick from the same options, and the second pick cannot reroll", async () => {
     await start({ localSeat: 0, hotseat: true });
     await winWave();
@@ -125,44 +110,85 @@ describe("Co-op shop", () => {
     expect(seen[1].reroll).toBeLessThan(0);
   });
 
-  it("lets the partner go first on odd waves, replays their step, then gives this seat the turn", async () => {
-    await start({ localSeat: 0, hotseat: true });
-    await winWave({ localSeat: 0 });
-    // wave 1 is odd, so seat 1 (remote here) picks first; they skip
-    const waiting = game.phaseInterceptor.to("SelectModifierPhase", false);
-    await waiting;
-    let ours = 0;
-    game.onNextPrompt(
-      "SelectModifierPhase",
-      UiMode.MODIFIER_SELECT,
-      () => {
-        ours = currentShop().typeOptions.length;
-        (game.scene.ui.getHandler() as any).processInput(Button.CANCEL);
-      },
-      undefined,
-      true,
-    );
-    game.onNextPrompt("SelectModifierPhase", UiMode.CONFIRM, () => {
-      (game.scene.ui.getHandler() as any).processInput(Button.ACTION);
-    });
-    const done = game.phaseInterceptor.to("TurnInitPhase");
-    coopSession.receiveShop({ kind: "skip" });
-    await done;
+  /** Put two rewards that need no target in front of the player: an Amulet Coin and an Exp. Share */
+  const forceRewards = (phase: any) => {
+    phase.typeOptions[0] = new ModifierTypeOption(modifierTypes.AMULET_COIN(), 0);
+    phase.typeOptions[1] = new ModifierTypeOption(modifierTypes.EXP_SHARE(), 0);
+  };
 
-    // the partner skipped, so our turn still has every option
-    expect(ours).toBe(3);
-    expect(sent.some(a => a.kind === "skip")).toBe(true);
+  const pickLocal = (phase: any, cursor: number) => {
+    phase.pendingPick = { kind: "reward", cursor };
+    phase.applyModifier(phase.typeOptions[cursor].type.newModifier(), -1);
+  };
+
+  it("gives each player half the money, hands out both picks on both clients and puts the money back together", async () => {
+    await start({ localSeat: 0, hotseat: true });
+    game.scene.money = 1001;
+    await winWave({ localSeat: 0 });
+    let total = 0;
+    let shown = -1;
+    let budgets: number[] = [];
+    game.onNextPrompt("SelectModifierPhase", UiMode.MODIFIER_SELECT, () => {
+      const phase = currentShop();
+      budgets = [...phase.budgets];
+      total = budgets[0] + budgets[1];
+      shown = game.scene.money;
+      forceRewards(phase);
+      const before = game.scene.modifiers.length;
+      pickLocal(phase, 0);
+      // nothing is handed out until the partner has locked in too
+      expect(game.scene.modifiers.length).toBe(before);
+      coopSession.receiveShop({ kind: "reward", cursor: 1 });
+    });
+    const before = game.scene.modifiers.length;
+    await game.phaseInterceptor.to("TurnInitPhase");
+
+    expect(budgets[0]).toBeGreaterThanOrEqual(budgets[1]);
+    expect(budgets[0] - budgets[1]).toBeLessThanOrEqual(1);
+    expect(shown).toBe(budgets[0]);
+    expect(game.scene.money).toBe(total);
+    expect(game.scene.modifiers.length).toBe(before + 2);
+    expect(sent.filter(a => a.kind === "reward")).toEqual([{ kind: "reward", cursor: 0, target: undefined }]);
   });
 
-  it("applies the partner's reward pick here and leaves one fewer option for this seat", async () => {
+  it("gives a reward both players wanted to the priority seat and lets the other pick again", async () => {
     await start({ localSeat: 0, hotseat: true });
     await winWave({ localSeat: 0 });
-    let ours = 0;
+    // wave 1: seat 1 (the partner here) has priority
+    let left = 0;
+    let expShare: unknown;
+    game.onNextPrompt("SelectModifierPhase", UiMode.MODIFIER_SELECT, () => {
+      const phase = currentShop();
+      forceRewards(phase);
+      expShare = phase.typeOptions[1].type;
+      pickLocal(phase, 0);
+      coopSession.receiveShop({ kind: "reward", cursor: 0 });
+    });
+    game.onNextPrompt("SelectModifierPhase", UiMode.MODIFIER_SELECT, () => {
+      const phase = currentShop();
+      left = phase.typeOptions.length;
+      // the Amulet Coin is gone, so the Exp. Share is first now
+      expect(phase.typeOptions[0].type).toBe(expShare);
+      pickLocal(phase, 0);
+    });
+    const before = game.scene.modifiers.length;
+    await game.phaseInterceptor.to("TurnInitPhase");
+
+    expect(left).toBe(2);
+    // the partner's Amulet Coin and our Exp. Share
+    expect(game.scene.modifiers.length).toBe(before + 2);
+    expect(sent.filter(a => a.kind === "reward").map(a => (a as any).cursor)).toEqual([0, 0]);
+  });
+
+  it("finishes when this player skips and the partner has already picked", async () => {
+    await start({ localSeat: 0, hotseat: true });
+    await winWave({ localSeat: 0 });
     game.onNextPrompt(
       "SelectModifierPhase",
       UiMode.MODIFIER_SELECT,
       () => {
-        ours = currentShop().typeOptions.length;
+        forceRewards(currentShop());
+        coopSession.receiveShop({ kind: "reward", cursor: 0 });
         (game.scene.ui.getHandler() as any).processInput(Button.CANCEL);
       },
       undefined,
@@ -171,33 +197,10 @@ describe("Co-op shop", () => {
     game.onNextPrompt("SelectModifierPhase", UiMode.CONFIRM, () => {
       (game.scene.ui.getHandler() as any).processInput(Button.ACTION);
     });
-    const done = game.phaseInterceptor.to("TurnInitPhase");
-    // the first shop belongs to the partner; wait for it to open, make sure it holds an untargeted reward, take it
-    for (let i = 0; i < 100 && !currentShop().typeOptions; i++) {
-      await new Promise(resolve => setTimeout(resolve, 20));
-    }
-    const phase = currentShop();
-    phase.typeOptions[0] = new ModifierTypeOption(modifierTypes.AMULET_COIN(), 0);
     const before = game.scene.modifiers.length;
-    coopSession.receiveShop({ kind: "reward", cursor: 0 });
-    await done;
+    await game.phaseInterceptor.to("TurnInitPhase");
 
     expect(game.scene.modifiers.length).toBe(before + 1);
-    expect(ours).toBe(2);
-  });
-
-  it("sends the local seat's skip to the partner", async () => {
-    await start({ localSeat: 0, hotseat: true });
-    await winWave({ localSeat: 1 });
-    // seat 1 (local now) picks first on wave 1, then seat 0 (remote) picks
-    skipPrompt();
-    const done = game.phaseInterceptor.to("TurnInitPhase");
-    // let our own skip go out, then the partner takes their turn
-    for (let i = 0; i < 100 && sent.length === 0; i++) {
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    expect(sent.filter(a => a.kind === "skip")).toHaveLength(1);
-    coopSession.receiveShop({ kind: "skip" });
-    await done;
+    expect(sent).toContainEqual({ kind: "skip" });
   });
 });
