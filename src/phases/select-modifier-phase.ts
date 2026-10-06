@@ -297,6 +297,11 @@ export class SelectModifierPhase extends BattlePhase {
       this.tryResolve();
       return;
     }
+    this.showWaiting();
+  }
+
+  /** Leave the shop screen and say we are waiting for the partner's choice. */
+  private showWaiting(): void {
     globalScene.ui.setMode(UiMode.MESSAGE).then(() => {
       if (this.simStage === "waiting" && !this.ended) {
         globalScene.ui.showText("Waiting for your partner...", 0);
@@ -328,15 +333,12 @@ export class SelectModifierPhase extends BattlePhase {
         this.locks.set(second, { kind: "skip" });
         this.tryResolve();
       } else if (second === coopSession.localSeat) {
-        this.simStage = "picking";
-        globalScene.ui.showText(
-          "Your partner got that one first. Pick another reward!",
-          null,
-          () => {
-            this.resetModifierSelect(this.simCallback!);
-          },
-          1500,
-        );
+        // The shop screen may still be open (this player locked in second): leave it first, or it would never reopen
+        this.pickAgain("Your partner got that one first. Pick another reward!");
+      } else {
+        // We won the tie; wait for the partner's new pick
+        this.simStage = "waiting";
+        this.showWaiting();
       }
       return;
     }

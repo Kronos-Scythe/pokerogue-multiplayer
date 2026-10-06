@@ -8,7 +8,7 @@ import { ModifierTypeOption, PokemonModifierType } from "#modifiers/modifier-typ
 import { type CoopShopAction, coopSession } from "#system/coop-session";
 import { GameManager } from "#test/framework/game-manager";
 import Phaser from "phaser";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 describe("Co-op shop", () => {
   let phaserGame: Phaser.Game;
@@ -179,6 +179,35 @@ describe("Co-op shop", () => {
     // the partner's Amulet Coin and our Exp. Share
     expect(game.scene.modifiers.length).toBe(before + 2);
     expect(sent.filter(a => a.kind === "reward").map(a => (a as any).cursor)).toEqual([0, 0]);
+  });
+
+  it("lets the loser of a tie pick again when they lock in after the partner (shop screen still open)", async () => {
+    await start({ localSeat: 0, hotseat: true });
+    await winWave({ localSeat: 0 });
+    // wave 1: seat 1 (the partner here) has priority and has already chosen the first reward
+    let reopened = false;
+    const modes: UiMode[] = [];
+    game.onNextPrompt("SelectModifierPhase", UiMode.MODIFIER_SELECT, async () => {
+      const phase = currentShop();
+      forceRewards(phase);
+      coopSession.receiveShop({ kind: "reward", cursor: 0 });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const setMode = game.scene.ui.setMode.bind(game.scene.ui);
+      vi.spyOn(game.scene.ui, "setMode").mockImplementation((mode, ...args) => {
+        modes.push(mode);
+        return setMode(mode, ...args);
+      });
+      pickLocal(phase, 0);
+    });
+    game.onNextPrompt("SelectModifierPhase", UiMode.MODIFIER_SELECT, () => {
+      reopened = true;
+      pickLocal(currentShop(), 0);
+    });
+    await game.phaseInterceptor.to("TurnInitPhase");
+
+    expect(reopened).toBe(true);
+    // the open shop screen was left before it was shown again (setting the same mode twice does nothing)
+    expect(modes.slice(0, 2)).toEqual([UiMode.MESSAGE, UiMode.MODIFIER_SELECT]);
   });
 
   it("finishes when this player skips and the partner has already picked", async () => {
