@@ -2,7 +2,7 @@ import { type CoopSocket, type CoopStarter, coopNetwork } from "#system/coop-net
 import { coopSession } from "#system/coop-session";
 import { coopSnapshot } from "#system/coop-snapshot";
 import { hashText } from "#system/coop-sync";
-import { getCoopTitleConfigs, parseCoopUrl } from "#system/coop-url";
+import { describeRelayAddress, getCoopTitleConfigs, normalizeRelayAddress, parseCoopUrl } from "#system/coop-url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** A stand-in for the relay server: the same room rules, no sockets */
@@ -62,6 +62,11 @@ class FakeRelay {
       from.room = message.room;
       from.receive({ type: "joined", room: message.room, token: `guest-${message.room}` });
       entry.host?.receive({ type: "peer-joined" });
+    } else if (message.type === "list") {
+      from.receive({
+        type: "lobbies",
+        lobbies: [...this.rooms].map(([room, entry]) => ({ room, host: "Ana", players: entry.guest ? 2 : 1, max: 2 })),
+      });
     } else if (message.type === "resumable") {
       this.rooms.get(from.room!)!.resumable = true;
     } else if (message.type === "rejoin") {
@@ -355,5 +360,58 @@ describe("co-op connection", () => {
       }
       expect(results).toEqual([true, true, true, false, false]);
     });
+  });
+});
+
+describe("normalizeRelayAddress", () => {
+  const page = { protocol: "http:", hostname: "10.0.0.5" };
+
+  it("turns what a player types into a relay address", () => {
+    expect(normalizeRelayAddress("26.1.2.3", page)).toBe("ws://26.1.2.3:8787");
+    expect(normalizeRelayAddress(" 26.1.2.3:9000 ", page)).toBe("ws://26.1.2.3:9000");
+    expect(normalizeRelayAddress("http://26.1.2.3/", page)).toBe("ws://26.1.2.3:8787");
+    expect(normalizeRelayAddress("wss://relay.example.com:443", page)).toBe("wss://relay.example.com:443");
+  });
+
+  it("falls back to the machine the page came from, and uses wss for pages served over https", () => {
+    expect(normalizeRelayAddress("", page)).toBe("ws://10.0.0.5:8787");
+    expect(normalizeRelayAddress("example.com", { protocol: "https:", hostname: "h" })).toBe("wss://example.com:8787");
+  });
+
+  it("describes an address the way players say it", () => {
+    expect(describeRelayAddress("ws://26.1.2.3:8787")).toBe("26.1.2.3:8787");
+  });
+});
+
+describe("listLobbies and names", () => {
+  let relay: FakeRelay;
+  beforeEach(() => {
+    relay = new FakeRelay();
+    coopNetwork.socketFactory = () => relay.connect();
+  });
+  afterEach(() => {
+    coopNetwork.disconnect();
+    coopSession.reset();
+  });
+
+  it("asks the relay which lobbies are open", async () => {
+    const hosting = coopNetwork.connect({ server: "ws://x", role: "host", room: "ROOM", name: "Ana" });
+    hosting.catch(() => {});
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(await coopNetwork.listLobbies("ws://x")).toEqual([{ room: "ROOM", host: "Ana", players: 1, max: 2 }]);
+  });
+
+  it("gives up when the relay does not answer", async () => {
+    coopNetwork.socketFactory = () => new FakeSocket(relay);
+    await expect(coopNetwork.listLobbies("ws://x", 20)).rejects.toThrow("did not answer");
+  });
+
+  it("tells the host their lobby is open", async () => {
+    const opened: string[] = [];
+    coopNetwork.onHosted = room => opened.push(room);
+    coopNetwork.connect({ server: "ws://x", role: "host", room: "ROOM", name: "Ana" }).catch(() => {});
+    await new Promise(resolve => setTimeout(resolve, 20));
+    coopNetwork.onHosted = null;
+    expect(opened).toEqual(["ROOM"]);
   });
 });

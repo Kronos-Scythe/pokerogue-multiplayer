@@ -48,4 +48,6 @@ export enum UiMode {
   CHANGE_PASSWORD_FORM,
   ALERT_MODAL,
   PROFILE_NAME,
+  COOP_LOBBY,
+  COOP_TEXT,
 }

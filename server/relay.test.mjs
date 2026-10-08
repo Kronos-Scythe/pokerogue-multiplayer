@@ -49,8 +49,8 @@ describe("co-op relay", () => {
     assert.match(room, /^[A-Z2-9]{4}$/);
 
     guest.send({ type: "join", room: room.toLowerCase() });
-    assert.deepEqual(withoutToken(await guest.next()), { type: "joined", room });
-    assert.deepEqual(await host.next(), { type: "peer-joined" });
+    assert.deepEqual(withoutToken(await guest.next()), { type: "joined", room, host: "Player" });
+    assert.deepEqual(await host.next(), { type: "peer-joined", name: "Player" });
 
     host.send({ type: "command", n: 1 });
     assert.deepEqual(await guest.next(), { type: "command", n: 1 });
@@ -68,13 +68,43 @@ describe("co-op relay", () => {
 
     const guest = await client();
     guest.send({ type: "join" });
-    assert.deepEqual(withoutToken(await guest.next()), { type: "joined", room: "FIRSTROOM" });
-    assert.deepEqual(await first.next(), { type: "peer-joined" });
+    assert.deepEqual(withoutToken(await guest.next()), { type: "joined", room: "FIRSTROOM", host: "Player" });
+    assert.deepEqual(await first.next(), { type: "peer-joined", name: "Player" });
 
     // that room is full now, so the next guest without a code gets the other one
     const another = await client();
     another.send({ type: "join" });
-    assert.deepEqual(withoutToken(await another.next()), { type: "joined", room: "SECONDROOM" });
+    assert.deepEqual(withoutToken(await another.next()), { type: "joined", room: "SECONDROOM", host: "Player" });
+  });
+
+  it("lists the open lobbies with their host and how many players are in", async () => {
+    const host = await client();
+    host.send({ type: "host", room: "LOBBYONE", name: "Ana <b>" });
+    await host.next();
+    const viewer = await client();
+    viewer.send({ type: "list" });
+    const open = (await viewer.next()).lobbies.find(lobby => lobby.room === "LOBBYONE");
+    // names are cleaned up and a lobby with just its host has one player in it
+    assert.deepEqual(open, { room: "LOBBYONE", host: "Ana b", players: 1, max: 2 });
+
+    const guest = await client();
+    guest.send({ type: "join", room: "LOBBYONE", name: "Bo" });
+    assert.equal((await guest.next()).host, "Ana b");
+    assert.deepEqual(await host.next(), { type: "peer-joined", name: "Bo" });
+    viewer.send({ type: "list" });
+    assert.equal((await viewer.next()).lobbies.find(lobby => lobby.room === "LOBBYONE").players, 2);
+
+    // a lobby closes with its host
+    host.send({ type: "leave" });
+    await guest.next();
+    viewer.send({ type: "list" });
+    assert.equal(
+      (await viewer.next()).lobbies.some(lobby => lobby.room === "LOBBYONE"),
+      false,
+    );
+    for (const c of [host, guest, viewer]) {
+      c.socket.close();
+    }
   });
 
   it("says so when there is nobody to join", async () => {

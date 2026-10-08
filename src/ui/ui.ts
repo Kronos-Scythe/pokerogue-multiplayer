@@ -20,6 +20,8 @@ import { GameChallengesUiHandler } from "#ui/challenges-select-ui-handler";
 import { ChangePasswordFormUiHandler } from "#ui/change-password-form-ui-handler";
 import { CommandUiHandler } from "#ui/command-ui-handler";
 import { ConfirmUiHandler } from "#ui/confirm-ui-handler";
+import { CoopLobbyUiHandler } from "#ui/coop-lobby-ui-handler";
+import { CoopTextFormUiHandler } from "#ui/coop-text-form-ui-handler";
 import { SettingsDisplayUiHandler } from "#ui/display-settings-ui-handler";
 import { EggGachaUiHandler } from "#ui/egg-gacha-ui-handler";
 import { EggHatchSceneUiHandler } from "#ui/egg-hatch-scene-ui-handler";
@@ -103,6 +105,8 @@ const noTransitionModes = [
   UiMode.RENAME_POKEMON,
   UiMode.RENAME_RUN,
   UiMode.PROFILE_NAME,
+  UiMode.COOP_LOBBY,
+  UiMode.COOP_TEXT,
   UiMode.TEST_DIALOGUE,
   UiMode.AUTO_COMPLETE,
   UiMode.ADMIN,
@@ -186,6 +190,8 @@ export class UI extends Phaser.GameObjects.Container {
       new ChangePasswordFormUiHandler(),
       new AlertModalUiHandler(),
       new ProfileNameFormUiHandler(),
+      new CoopLobbyUiHandler(),
+      new CoopTextFormUiHandler(),
     ];
   }
 

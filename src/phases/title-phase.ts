@@ -12,6 +12,7 @@ import { getDailyRunStarters, startDailyEventChallenges } from "#data/daily-run"
 import { modifierTypes } from "#data/data-lists";
 import { Gender } from "#data/gender";
 import { BattleType } from "#enums/battle-type";
+import { GameDataType } from "#enums/game-data-type";
 import { GameModes } from "#enums/game-modes";
 import { ModifierPoolType } from "#enums/modifier-pool-type";
 import { UiMode } from "#enums/ui-mode";
@@ -25,9 +26,18 @@ import { coopNetwork } from "#system/coop-network";
 import { coopSession } from "#system/coop-session";
 import { coopSnapshot } from "#system/coop-snapshot";
 import { coopTelemetry } from "#system/coop-telemetry";
-import { type CoopUrlConfig, getCoopTitleConfigs } from "#system/coop-url";
+import {
+  type CoopUrlConfig,
+  describeRelayAddress,
+  getCoopTitleConfigs,
+  normalizeRelayAddress,
+  parseCoopUrl,
+} from "#system/coop-url";
+import { getLocalProfileName, listLocalProfiles, setLocalProfileName } from "#system/local-profile";
 import { vouchers } from "#system/voucher";
 import type { OptionSelectItem, OptionSelectModeConfig } from "#types/ui-types";
+import type { CoopLobbyConfig, CoopLobbyUiHandler } from "#ui/coop-lobby-ui-handler";
+import type { CoopTextFormConfig } from "#ui/coop-text-form-ui-handler";
 import { SaveSlotUiMode } from "#ui/save-slot-select-ui-handler";
 import { isLocalServerConnected } from "#utils/common";
 import i18next from "i18next";
@@ -127,19 +137,37 @@ export class TitlePhase extends Phase {
         },
       });
     }
-    // Co-op is always offered; the page address can pick the role, room and relay (?coop=join&room=CODE&server=...)
-    const coopConfigs =
-      typeof window === "undefined" ? [] : getCoopTitleConfigs(window.location.search, window.location);
-    for (const coopConfig of coopConfigs) {
+    // Co-op is always offered. A page address that asks for a role (?coop=join&room=CODE&server=...) goes straight
+    // there; otherwise the lobby screen lets players host, or pick a lobby from the list
+    const page = typeof window === "undefined" ? null : { search: window.location.search, location: window.location };
+    const asked = page ? parseCoopUrl(page.search, page.location) : null;
+    if (asked) {
       options.push({
         label:
-          coopConfig.role === "host"
+          asked.role === "host"
             ? "Co-op: host a game"
-            : coopConfig.room
-              ? `Co-op: join room ${coopConfig.room}`
+            : asked.room
+              ? `Co-op: join room ${asked.room}`
               : "Co-op: join a game",
         handler: () => {
-          this.startCoop(coopConfig);
+          this.startCoop(asked);
+          return true;
+        },
+      });
+    } else if (page) {
+      options.push({
+        label: "Co-op",
+        handler: () => {
+          this.openCoopLobby();
+          return true;
+        },
+      });
+    }
+    if (page) {
+      options.push({
+        label: "Profile",
+        handler: () => {
+          this.openProfileMenu(() => this.showOptions(lastSessionSlot));
           return true;
         },
       });
@@ -244,13 +272,8 @@ export class TitlePhase extends Phase {
     await ui.setMode(UiMode.TITLE, config);
   }
 
-  /** Connect to the relay and the partner, then go on to picking starters. */
-  private startCoop(config: CoopUrlConfig): void {
-    const { ui } = globalScene;
-    ui.setMode(UiMode.MESSAGE);
-    ui.clearText();
-    ui.showText("Connecting to the relay server...", 0);
-    coopNetwork.onStatus = text => ui.showText(text, 0);
+  /** What both co-op ways in (the lobby screen and a direct address) need before connecting. */
+  private setupCoopHandlers(): void {
     // Balance settings from the page address (e.g. ?coopBossCut=0&coopLevels=2) and a fresh run log
     applyCoopBalanceParams(window.location.search);
     coopTelemetry.clear();
@@ -278,8 +301,24 @@ export class TitlePhase extends Phase {
     coopNetwork.onReconnected = () => say("Connected again! Syncing up...");
     coopNetwork.onPartnerAway = () => say("Your partner lost their connection. Waiting for them to come back...");
     coopNetwork.onPartnerBack = () => say("Your partner is back! Syncing up...");
+  }
+
+  /** The name this player goes by in lobbies: their profile name. */
+  private coopPlayerName(): string {
+    return getLocalProfileName(window.location.search, localStorage);
+  }
+
+  /** Connect to the relay and the partner, then go on to picking starters. */
+  private startCoop(config: CoopUrlConfig): void {
+    const { ui } = globalScene;
+    ui.setMode(UiMode.MESSAGE);
+    ui.clearText();
+    ui.showText("Connecting to the relay server...", 0);
+    coopNetwork.onStatus = text => ui.showText(text, 0);
+    coopNetwork.onHosted = null;
+    this.setupCoopHandlers();
     coopNetwork
-      .connect({ server: config.server, role: config.role, room: config.room })
+      .connect({ server: config.server, role: config.role, room: config.room, name: this.coopPlayerName() })
       .then(() => {
         ui.clearText();
         this.gameMode = GameModes.CLASSIC;
@@ -297,6 +336,146 @@ export class TitlePhase extends Phase {
           2500,
         );
       });
+  }
+
+  /** The co-op lobby screen: pick a lobby to join, or host one and wait in it. */
+  private openCoopLobby(server?: string): void {
+    const { ui } = globalScene;
+    const page = window.location;
+    const relay = server ?? getCoopTitleConfigs(page.search, page)[0].server;
+    const lobby = () => ui.getHandler() as CoopLobbyUiHandler;
+    const connect = (role: "host" | "join", room?: string) => {
+      this.setupCoopHandlers();
+      coopNetwork.onStatus = null;
+      coopNetwork.onHosted = code => lobby().setHosting(code);
+      lobby().setStatus(role === "host" ? "Opening your lobby..." : "Joining...");
+      coopNetwork
+        .connect({ server: relay, role, room, name: this.coopPlayerName() })
+        .then(() => {
+          coopNetwork.onHosted = null;
+          ui.setMode(UiMode.MESSAGE);
+          ui.clearText();
+          this.gameMode = GameModes.CLASSIC;
+          this.end();
+        })
+        .catch((err: Error) => {
+          coopNetwork.onHosted = null;
+          coopSession.reset();
+          if (ui.mode === UiMode.COOP_LOBBY) {
+            lobby().setHosting(null);
+            lobby().setStatus(err.message);
+          }
+        });
+    };
+    const config: CoopLobbyConfig = {
+      name: this.coopPlayerName(),
+      server: describeRelayAddress(relay),
+      list: () => coopNetwork.listLobbies(relay),
+      onHost: () => connect("host"),
+      onJoin: room => connect("join", room),
+      onCancelHost: () => {
+        coopNetwork.disconnect();
+        coopSession.reset();
+        this.openCoopLobby(relay);
+      },
+      onProfile: () => this.openProfileMenu(() => this.openCoopLobby(relay)),
+      onServer: () => {
+        const form: CoopTextFormConfig = {
+          title: "Relay address",
+          label: "Address",
+          confirm: "Connect",
+          initial: describeRelayAddress(relay),
+          buttonActions: [
+            (typed: string) => {
+              ui.revertMode();
+              this.openCoopLobby(normalizeRelayAddress(typed, page));
+            },
+            () => ui.revertMode(),
+          ],
+        };
+        ui.setOverlayMode(UiMode.COOP_TEXT, form);
+      },
+      onBack: () => {
+        coopNetwork.disconnect();
+        globalScene.phaseManager.toTitleScreen();
+        super.end();
+      },
+    };
+    ui.setMode(UiMode.COOP_LOBBY, config);
+  }
+
+  /**
+   * The profile screen: who you are playing as, the other profiles saved in this browser, a new profile, and
+   * bringing your progress over from the main game.
+   * @param back - Called to go back to wherever this was opened from
+   */
+  private openProfileMenu(back: () => void): void {
+    const { ui } = globalScene;
+    const current = this.coopPlayerName();
+    const switchTo = (name: string) => {
+      // The page reloads so the game starts again from that profile's saves
+      if (setLocalProfileName(name, localStorage)) {
+        window.location.reload();
+      }
+    };
+    const options: OptionSelectItem[] = [{ label: `Playing as: ${current}`, handler: () => false, keepOpen: true }];
+    for (const name of listLocalProfiles(localStorage, current).filter(name => name !== current)) {
+      options.push({ label: `Switch to ${name}`, handler: () => (switchTo(name), true) });
+    }
+    options.push({
+      label: "New profile",
+      handler: () => {
+        const form: CoopTextFormConfig = {
+          title: "New profile",
+          label: "Nickname",
+          confirm: "Create",
+          buttonActions: [
+            (typed: string) => {
+              if (setLocalProfileName(typed, localStorage)) {
+                window.location.reload();
+              } else {
+                ui.playError();
+              }
+            },
+            () => {
+              ui.revertMode();
+              back();
+            },
+          ],
+        };
+        ui.setOverlayMode(UiMode.COOP_TEXT, form);
+        return true;
+      },
+    });
+    options.push({
+      label: "Import from the main game",
+      handler: () => {
+        this.openImportMenu(back);
+        return true;
+      },
+    });
+    options.push({ label: i18next.t("menu:cancel"), handler: () => (back(), true) });
+    ui.setMode(UiMode.OPTION_SELECT, { options, yOffset: 48 } satisfies OptionSelectModeConfig);
+  }
+
+  /** Bring progress over from the main game's "Export data" files into the profile in use. */
+  private openImportMenu(back: () => void): void {
+    const { ui, gameData } = globalScene;
+    const importing =
+      (type: GameDataType, slot = 0) =>
+      () => {
+        gameData.importData(type, slot);
+        return true;
+      };
+    const options: OptionSelectItem[] = [
+      // Where the file comes from, since that is the part nobody can guess
+      { label: "Main game > Menu > Manage Data > Export", handler: () => false, keepOpen: true },
+      { label: "Pokedex and unlocks (System)", handler: importing(GameDataType.SYSTEM), keepOpen: true },
+      { label: "A saved run (into slot 1)", handler: importing(GameDataType.SESSION, 0), keepOpen: true },
+      { label: "Run history", handler: importing(GameDataType.RUN_HISTORY), keepOpen: true },
+      { label: i18next.t("menu:cancel"), handler: () => (this.openProfileMenu(back), true) },
+    ];
+    ui.setMode(UiMode.OPTION_SELECT, { options, yOffset: 48 } satisfies OptionSelectModeConfig);
   }
 
   // TODO: Make callers actually wait for the save slot to load

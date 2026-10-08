@@ -47,3 +47,27 @@ export function getLocalProfileName(search: string, storage: Pick<Storage, "getI
     return asked ?? DEFAULT_LOCAL_PROFILE;
   }
 }
+
+/**
+ * The profiles that already have saves in this browser, plus the one in use (even if it is still empty).
+ * A profile's saves live under `data_<name>`.
+ * @param storage - The browser's `localStorage`
+ * @param current - The profile in use
+ */
+export function listLocalProfiles(storage: Pick<Storage, "length" | "key">, current: string): string[] {
+  const names = new Set<string>([current]);
+  try {
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (key?.startsWith("data_")) {
+        const name = cleanProfileName(key.slice("data_".length));
+        if (name) {
+          names.add(name);
+        }
+      }
+    }
+  } catch {
+    // storage not readable: just the current one
+  }
+  return [...names].sort((a, b) => (a === current ? -1 : b === current ? 1 : a.localeCompare(b)));
+}

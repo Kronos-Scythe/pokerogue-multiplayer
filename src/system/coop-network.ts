@@ -26,13 +26,24 @@ type Wire =
 
 type RelayMessage =
   | { type: "hosted"; room: string; token?: string }
-  | { type: "joined"; room: string; token?: string }
+  | { type: "joined"; room: string; token?: string; host?: string }
   | { type: "rejoined"; room: string }
-  | { type: "peer-joined" }
+  | { type: "peer-joined"; name?: string }
+  | { type: "lobbies"; lobbies: CoopLobby[] }
   | { type: "peer-away" }
   | { type: "peer-back" }
   | { type: "peer-left" }
   | { type: "error"; message: string };
+
+/** A room somebody opened and is waiting in, as the relay lists it. */
+export interface CoopLobby {
+  room: string;
+  /** The host's name */
+  host: string;
+  /** How many players are in (1 = open to join) */
+  players: number;
+  max: number;
+}
 
 /** The parts of a browser `WebSocket` that the connection uses (so tests can supply a stand-in). */
 export interface CoopSocket {
@@ -73,6 +84,8 @@ class CoopNetwork {
 
   /** Called with a short progress or problem text for the player to read */
   public onStatus: ((text: string) => void) | null = null;
+  /** Called once the host's room is open, with its code (the host then waits for a partner) */
+  public onHosted: ((room: string) => void) | null = null;
   /** Called when the other player disconnects, or the connection drops, during a run */
   public onPartnerLeft: (() => void) | null = null;
   /** Called when the two games disagree about the state of the run */
@@ -93,6 +106,9 @@ class CoopNetwork {
 
   public role: "host" | "join" | null = null;
   public room: string | null = null;
+  /** The names of the two players (the partner's is known once they are in the room) */
+  public localName = "Player";
+  public partnerName = "";
 
   private socket: CoopSocket | null = null;
   private ready = false;
@@ -116,14 +132,66 @@ class CoopNetwork {
   }
 
   /**
+   * Ask a relay which lobbies are open, over a short connection of its own.
+   * @param server - The relay's WebSocket address
+   * @param timeoutMs - How long to wait for the answer
+   */
+  public listLobbies(server: string, timeoutMs = 4000): Promise<CoopLobby[]> {
+    return new Promise<CoopLobby[]>((resolve, reject) => {
+      const socket = this.socketFactory(server);
+      let settled = false;
+      const finish = (error: string | null, lobbies: CoopLobby[] = []) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        socket.onclose = null;
+        socket.onerror = null;
+        socket.onmessage = null;
+        try {
+          socket.close();
+        } catch {
+          // already gone
+        }
+        if (error) {
+          reject(new Error(error));
+        } else {
+          resolve(lobbies);
+        }
+      };
+      const timer = setTimeout(() => finish("The relay server did not answer."), timeoutMs);
+      socket.onopen = () => socket.send(JSON.stringify({ type: "list" }));
+      socket.onerror = () => finish("Could not reach the relay server.");
+      socket.onclose = () => finish("The connection to the relay server closed.");
+      socket.onmessage = event => {
+        try {
+          const message = JSON.parse(String(event.data)) as RelayMessage;
+          if (message.type === "lobbies") {
+            finish(null, message.lobbies);
+          }
+        } catch {
+          // not for us
+        }
+      };
+    });
+  }
+
+  /**
    * Connect to the relay, open or join a room, and wait until both players are there.
    * Starts the co-op session when it succeeds.
    * @returns The room code
    */
-  public connect(options: { server: string; role: "host" | "join"; room?: string | undefined }): Promise<string> {
+  public connect(options: {
+    server: string;
+    role: "host" | "join";
+    room?: string | undefined;
+    name?: string | undefined;
+  }): Promise<string> {
     this.disconnect();
     this.role = options.role;
     this.server = options.server;
+    this.localName = options.name || "Player";
     return new Promise<string>((resolve, reject) => {
       const socket = this.socketFactory(options.server);
       this.socket = socket;
@@ -150,9 +218,9 @@ class CoopNetwork {
 
       socket.onopen = () => {
         if (options.role === "host") {
-          this.sendRaw({ type: "host", room: options.room });
+          this.sendRaw({ type: "host", room: options.room, name: this.localName });
         } else {
-          this.sendRaw({ type: "join", room: options.room });
+          this.sendRaw({ type: "join", room: options.room, name: this.localName });
         }
       };
       socket.onerror = () => fail("Could not reach the relay server.");
@@ -193,13 +261,16 @@ class CoopNetwork {
         this.pendingRoom = message.room;
         this.token = message.token ?? null;
         this.onStatus?.(`Room ${message.room} is open. Waiting for your partner...`);
+        this.onHosted?.(message.room);
         return;
       case "peer-joined":
+        this.partnerName = message.name || "Player";
         succeed(this.pendingRoom ?? "");
         return;
       case "joined":
         this.token = message.token ?? null;
         if (role === "join") {
+          this.partnerName = message.host || "Player";
           succeed(message.room);
         }
         return;
@@ -472,6 +543,7 @@ class CoopNetwork {
     coopSnapshot.clear();
     this.room = null;
     this.role = null;
+    this.partnerName = "";
     this.pendingRoom = null;
     this.early.length = 0;
     this.waiting = [];

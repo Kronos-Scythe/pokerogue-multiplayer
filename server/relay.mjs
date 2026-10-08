@@ -9,15 +9,18 @@ const CODE_LENGTH = 4;
  * The relay never looks inside messages, so it needs no knowledge of the game.
  *
  * Client -> relay:
- *   { type: "host", room?: string }   open a room (a code is made up when none is given)
- *   { type: "join", room?: string }   join a room opened by a host (without a code: the longest-waiting open room)
+ *   { type: "host", room?: string, name?: string }   open a room (a code is made up when none is given)
+ *   { type: "join", room?: string, name?: string }   join a room opened by a host (without a code: the
+ *                                     longest-waiting open room)
+ *   { type: "list" }                  ask which lobbies are open (works without being in a room)
  *   { type: "resumable" }             the run has started: from now on a dropped connection is only "away" for a
  *                                     while, and the player can come back with their token
  *   { type: "rejoin", room, token }   take your place in a room again after the connection dropped
  *   { type: "leave" }                 leave for good, right now
  * Relay -> client:
  *   { type: "hosted", room, token }   the room is open (keep the token to rejoin)
- *   { type: "joined", room, token }   you are in the room (the host also gets { type: "peer-joined" })
+ *   { type: "joined", room, token, host }   you are in the room (the host also gets { type: "peer-joined", name })
+ *   { type: "lobbies", lobbies }      the open lobbies: [{ room, host, players, max }], longest-waiting first
  *   { type: "rejoined", room }        you are back (the other player gets { type: "peer-back" })
  *   { type: "peer-away" }             the other player's connection dropped; they have a while to come back
  *   { type: "peer-left" }             the other player left for good
@@ -31,11 +34,21 @@ const CODE_LENGTH = 4;
 export function createRelay({ graceMs = 5 * 60_000, ...options }) {
   const wss = new WebSocketServer(options);
   /**
-   * @typedef {{ host: any, guest: any, hostToken: string, guestToken?: string, resumable: boolean,
+   * @typedef {{ host: any, guest: any, hostName: string, guestName?: string, hostToken: string, guestToken?: string,
+   *   resumable: boolean,
    *   away: { host?: ReturnType<typeof setTimeout>, guest?: ReturnType<typeof setTimeout> } }} Room
    * @type {Map<string, Room>}
    */
   const rooms = new Map();
+
+  /** Names are shown to the other players: plain text, no longer than 20 characters */
+  const cleanName = name =>
+    (typeof name === "string"
+      ? name
+          .replace(/[^\p{L}\p{N} _-]/gu, "")
+          .trim()
+          .slice(0, 20)
+      : "") || "Player";
 
   const newToken = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 
@@ -72,6 +85,7 @@ export function createRelay({ graceMs = 5 * 60_000, ...options }) {
       rooms.delete(room);
     } else {
       entry.guest = undefined;
+      entry.guestName = undefined;
       entry.guestToken = undefined;
       entry.resumable = false;
     }
@@ -133,9 +147,24 @@ export function createRelay({ graceMs = 5 * 60_000, ...options }) {
         }
         const room = wanted || newCode();
         const token = newToken();
-        rooms.set(room, { host: socket, guest: undefined, hostToken: token, resumable: false, away: {} });
+        rooms.set(room, {
+          host: socket,
+          guest: undefined,
+          hostName: cleanName(message.name),
+          hostToken: token,
+          resumable: false,
+          away: {},
+        });
         socket.room = room;
         send(socket, { type: "hosted", room, token });
+        return;
+      }
+
+      if (message.type === "list") {
+        const lobbies = [...rooms]
+          .filter(([, entry]) => entry.host && !entry.resumable)
+          .map(([room, entry]) => ({ room, host: entry.hostName, players: entry.guest ? 2 : 1, max: 2 }));
+        send(socket, { type: "lobbies", lobbies });
         return;
       }
 
@@ -156,10 +185,11 @@ export function createRelay({ graceMs = 5 * 60_000, ...options }) {
           send(socket, { type: "error", message: "That room is full." });
         } else {
           entry.guest = socket;
+          entry.guestName = cleanName(message.name);
           entry.guestToken = newToken();
           socket.room = room;
-          send(socket, { type: "joined", room, token: entry.guestToken });
-          send(entry.host, { type: "peer-joined" });
+          send(socket, { type: "joined", room, token: entry.guestToken, host: entry.hostName });
+          send(entry.host, { type: "peer-joined", name: entry.guestName });
         }
         return;
       }

@@ -43,3 +43,40 @@ export function getCoopTitleConfigs(search: string, page: { protocol: string; ho
   const chosenServer = params.get("server")?.trim() || server;
   return (["host", "join"] as const).map(role => ({ role, room: undefined, server: chosenServer! }));
 }
+
+/**
+ * Turn what a player typed as the relay's address into a WebSocket address.
+ * `26.1.2.3` and `26.1.2.3:8787` both work, as does a full `ws://...` or `http://...` address.
+ * @param input - What was typed (may be empty, which means "the machine the page came from")
+ * @param page - Where the page is served from
+ */
+export function normalizeRelayAddress(input: string, page: { protocol: string; hostname: string }): string {
+  const fallback = parseCoopUrl("?coop=host", page)!.server;
+  let text = input.trim();
+  if (!text) {
+    return fallback;
+  }
+  const secure = page.protocol === "https:";
+  const scheme = /^(wss?|https?):\/\//i.exec(text)?.[1]?.toLowerCase();
+  text = text.replace(/^[a-z]+:\/\//i, "").replace(/\/+$/, "");
+  if (!text) {
+    return fallback;
+  }
+  if (!/:\d+$/.test(text)) {
+    text += `:${DEFAULT_RELAY_PORT}`;
+  }
+  const wsScheme =
+    scheme === "wss" || scheme === "https"
+      ? "wss"
+      : scheme === "ws" || scheme === "http"
+        ? "ws"
+        : secure
+          ? "wss"
+          : "ws";
+  return `${wsScheme}://${text}`;
+}
+
+/** The part of a relay address a player recognises: `26.1.2.3:8787` instead of `ws://26.1.2.3:8787`. */
+export function describeRelayAddress(server: string): string {
+  return server.replace(/^wss?:\/\//, "");
+}

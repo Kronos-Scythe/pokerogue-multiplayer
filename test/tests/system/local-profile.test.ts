@@ -1,4 +1,4 @@
-import { getLocalProfileName, isValidProfileName, setLocalProfileName } from "#system/local-profile";
+import { getLocalProfileName, isValidProfileName, listLocalProfiles, setLocalProfileName } from "#system/local-profile";
 import { describe, expect, it } from "vitest";
 
 const memoryStorage = () => {
@@ -60,5 +60,18 @@ describe("setLocalProfileName", () => {
     expect(isValidProfileName("Matheus_2")).toBe(true);
     expect(isValidProfileName("Ma theus")).toBe(false);
     expect(isValidProfileName("   ")).toBe(false);
+  });
+});
+
+describe("listLocalProfiles", () => {
+  const storageWith = (keys: string[]) => ({ length: keys.length, key: (i: number) => keys[i] ?? null });
+
+  it("lists the profile in use first, then the others that have saves, and ignores other keys", () => {
+    const storage = storageWith(["data_Zed", "data_Ana", "settings", "sessionData_Ana", "data_Guest"]);
+    expect(listLocalProfiles(storage, "Guest")).toEqual(["Guest", "Ana", "Zed"]);
+  });
+
+  it("includes the profile in use even when it has no saves yet", () => {
+    expect(listLocalProfiles(storageWith([]), "New")).toEqual(["New"]);
   });
 });
