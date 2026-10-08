@@ -18,7 +18,7 @@ const electronVersion = "39.8.10";
 const isWindows = process.platform === "win32";
 const npm = isWindows ? "npm.cmd" : "npm";
 
-function run(command, args, options = {}) {
+function run(command, args, { allowFailure = false, ...options } = {}) {
   console.log(`[package] ${command} ${args.join(" ")}`);
   // through the shell on Windows, so paths with spaces ("PokeRogue Co-op.exe") need quotes
   const quote = text => (isWindows && /\s/.test(text) ? `"${text}"` : text);
@@ -29,9 +29,13 @@ function run(command, args, options = {}) {
     ...options,
   });
   if (result.status !== 0) {
+    if (allowFailure) {
+      return false;
+    }
     console.error(`[package] Failed: ${command} ${args.join(" ")}`);
     process.exit(1);
   }
+  return true;
 }
 
 // A fresh clone has no dependencies yet, and the game's art and text live in submodules
@@ -82,7 +86,11 @@ writeFileSync(
 
 // 2. Electron for Windows with that code inside it
 const buildDir = join(releaseDir, "build");
-run(bin("electron-packager"), [
+// Electron itself is downloaded from GitHub. If that fails (network, proxy, antivirus), download
+// https://github.com/electron/electron/releases/download/v<version>/electron-v<version>-win32-x64.zip by hand
+// and put it in release/electron-zip/, then run this again: it is used instead of downloading.
+const zipDir = join(releaseDir, "electron-zip");
+const packagerArgs = [
   appDir,
   appName,
   "--platform=win32",
@@ -90,7 +98,28 @@ run(bin("electron-packager"), [
   `--out=${buildDir}`,
   `--electron-version=${electronVersion}`,
   "--overwrite",
-]);
+];
+const manualZip = `electron-v${electronVersion}-win32-x64.zip`;
+if (existsSync(join(zipDir, manualZip))) {
+  console.log(`[package] using ${manualZip} from release/electron-zip`);
+  packagerArgs.push(`--electron-zip-dir=${zipDir}`);
+}
+let packaged = false;
+for (let attempt = 1; attempt <= 3 && !packaged; attempt++) {
+  packaged = run(bin("electron-packager"), packagerArgs, { allowFailure: true });
+  if (!packaged && attempt < 3) {
+    console.log(`[package] download failed, trying again (${attempt}/3)...`);
+  }
+}
+if (!packaged) {
+  console.error(`
+[package] Could not download Electron. Do this once by hand:
+  1. Download https://github.com/electron/electron/releases/download/v${electronVersion}/${manualZip}
+     (open that link in your browser; it is about 120 MB)
+  2. Put the file in ${zipDir}
+  3. Run "pnpm coop:package --skip-build" again.`);
+  process.exit(1);
+}
 const built = readdirSync(buildDir).find(name => name.startsWith(appName));
 if (!built) {
   console.error("[package] The packager made nothing.");
