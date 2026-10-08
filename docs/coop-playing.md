@@ -6,9 +6,39 @@
 pnpm coop
 ```
 
-This starts the relay and the game page together (Ctrl+C stops both). The host opens the page and picks
-**Co-op: host a game**. The friend opens the host's address (the host's VPN or LAN IP, same port as the page) and
-picks **Co-op: join a game**. No room code is needed: a guest who gives none joins whoever is hosting.
+This starts the relay and the game page together (Ctrl+C stops both). Everyone picks **Co-op** in the title menu,
+which opens the **lobby screen**:
+
+- **Host** opens your lobby and waits in it (your seat P1, an open seat P2).
+- Lobbies other people opened show up in the list; pick one and press **Join** (or Confirm on the row).
+- **Server** changes which relay you look at, e.g. the host's VPN address (`26.1.2.3`, the port is optional).
+  A friend who runs the game on their own PC types the host's address here.
+- **Profile** opens the profile screen (below).
+
+A friend can also just open the host's page address (`http://<host VPN/LAN address>:8000/`); the relay is then
+assumed to be on that same machine.
+
+### Profiles and importing your main-game progress
+
+**Profile** (title menu, or in the lobby) shows who you play as. Each profile has its own saves, Pokedex and
+unlocks in this browser. You can switch to another profile that already has saves, or make a new one.
+
+To bring your progress over from the main game: in the main game open **Menu > Manage Data > Export Data** and pick
+**System** (Pokedex and unlocks), a **Slot** (a saved run) or **Run History**. In the fork pick
+**Profile > Import from the main game**, choose the same kind, and select the downloaded file. It replaces what
+that profile had, so make a new profile first if you want to keep the old one.
+
+### A program to send to a friend (Windows)
+
+```sh
+pnpm coop:package        # builds the game, then makes release/PokeRogue-Coop and release/PokeRogue-Coop.zip
+```
+
+The zip (about 600 MB, the game's art and music) holds `PokeRogue Co-op.exe` and a `game` folder. Whoever runs the
+exe gets the game page on port 8000 and the lobby relay on port 8787 in one window, and the browser opens by
+itself. The host picks Co-op > Host; the friend runs the same program, picks Co-op > Server, types the host's
+address, and joins from the list. Windows asks to allow the program through the firewall the first time: press
+Allow. (It may also warn about an unknown publisher: More info > Run anyway.)
 
 The rest of this page covers running the two parts separately and the address options.
 

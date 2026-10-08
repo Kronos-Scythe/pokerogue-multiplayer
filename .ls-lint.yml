@@ -34,6 +34,7 @@ ignore:
    - assets
    - locales
    - dist
+   - release
    - .devcontainer
    - "LICENSES"
    - .idea

@@ -46,4 +46,4 @@ coverage
 
 # Script outputs
 *.csv
-game-data-output/*
+game-data-output/*release/

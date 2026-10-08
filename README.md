@@ -25,8 +25,9 @@ pnpm install
 pnpm coop          # starts the relay server and the game page together
 ```
 
-The host opens the page and picks **Co-op: host a game**; the friend opens the host's address (LAN or VPN IP, same port)
-and picks **Co-op: join a game**. See [docs/coop-playing.md](./docs/coop-playing.md) for details and
+Everyone picks **Co-op** in the title menu, which opens a lobby screen: the host picks **Host**, the friend picks the
+host's lobby from the list (**Server** sets the host's LAN or VPN address). There is also a Windows program you can
+send (`pnpm coop:package`). See [docs/coop-playing.md](./docs/coop-playing.md) for details and
 [docs/coop-design.md](./docs/coop-design.md) for how it works.
 
 # Contributing
