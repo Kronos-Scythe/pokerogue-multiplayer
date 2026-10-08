@@ -33,6 +33,21 @@ function run(command, args, options = {}) {
   }
 }
 
+// A fresh clone has no dependencies yet, and the game's art and text live in submodules
+if (!existsSync(join(root, "node_modules"))) {
+  console.log("[package] Installing the game's dependencies first (one time, a few minutes)...");
+  const install = spawnSync("pnpm", ["install"], { cwd: root, stdio: "inherit", shell: process.platform === "win32" });
+  if (install.status !== 0) {
+    console.error("[package] pnpm install failed.");
+    process.exit(1);
+  }
+}
+if (!existsSync(join(root, "assets", "images")) || !existsSync(join(root, "locales", "en"))) {
+  console.error("[package] The game's art and text are missing. Run this once, then try again:");
+  console.error("[package]   git submodule update --init --recursive");
+  process.exit(1);
+}
+
 if (!process.argv.includes("--skip-build")) {
   run("pnpm", ["exec", "vite", "build", "--mode", "coop"]);
 }

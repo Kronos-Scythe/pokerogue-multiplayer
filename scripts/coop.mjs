@@ -13,6 +13,21 @@ const serverDir = join(root, "server");
 const relayPort = process.env.PORT ?? "8787";
 const isWindows = process.platform === "win32";
 
+// A fresh clone has no dependencies yet, and the game's art and text live in submodules
+if (!existsSync(join(root, "node_modules"))) {
+  console.log("[coop] Installing the game's dependencies first (one time, a few minutes)...");
+  const install = spawnSync("pnpm", ["install"], { cwd: root, stdio: "inherit", shell: process.platform === "win32" });
+  if (install.status !== 0) {
+    console.error("[coop] pnpm install failed.");
+    process.exit(1);
+  }
+}
+if (!existsSync(join(root, "assets", "images")) || !existsSync(join(root, "locales", "en"))) {
+  console.error("[coop] The game's art and text are missing. Run this once, then try again:");
+  console.error("[coop]   git submodule update --init --recursive");
+  process.exit(1);
+}
+
 // The relay has its own small package; install it the first time
 if (!existsSync(join(serverDir, "node_modules"))) {
   console.log("[coop] Installing the relay's dependencies (first run only)...");
