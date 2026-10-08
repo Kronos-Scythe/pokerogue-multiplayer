@@ -49,5 +49,6 @@ export enum UiMode {
   ALERT_MODAL,
   PROFILE_NAME,
   COOP_LOBBY,
-  COOP_TEXT,
+  COOP_SERVER,
+  COOP_PROFILE,
 }

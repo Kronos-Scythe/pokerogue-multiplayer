@@ -1,11 +1,10 @@
-// Packs the co-op launcher into a Windows program with the game next to it, ready to zip and send:
+// Packs PokeRogue co-op into a Windows desktop program with the game next to it, ready to zip and send:
 //   pnpm coop:package               builds the game, then makes release/PokeRogue-Coop (+ a zip)
 //   pnpm coop:package --skip-build  reuses the last build in dist/
 //   pnpm coop:package --no-zip      leaves out the zip
-// The program is Node itself with the launcher inside it (a "single executable application"), so the game's files
-// (hundreds of MB) stay in a folder beside it.
+// The program is an Electron window (desktop/main.mjs) that serves the game and runs the lobby relay inside itself.
 import { spawnSync } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,7 +12,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const releaseDir = join(root, "release");
 const toolsDir = join(releaseDir, ".tools");
 const packageDir = join(releaseDir, "PokeRogue-Coop");
-const exeName = "PokeRogue Co-op.exe";
+const appName = "PokeRogue Co-op";
+const exeName = `${appName}.exe`;
+const electronVersion = "39.8.10";
 const isWindows = process.platform === "win32";
 const npm = isWindows ? "npm.cmd" : "npm";
 
@@ -56,63 +57,70 @@ if (!existsSync(join(root, "dist", "index.html"))) {
   process.exit(1);
 }
 
-rmSync(packageDir, { recursive: true, force: true });
-mkdirSync(packageDir, { recursive: true });
+rmSync(releaseDir, { recursive: true, force: true });
 mkdirSync(toolsDir, { recursive: true });
 
 // Tools used only for packing, kept out of the project's own dependencies
-const toolPackages = ["esbuild", "postject"];
-const nodeVersion = process.versions.node;
-const installArgs = ["install", "--no-save", "--no-audit", "--no-fund", "--prefix", toolsDir];
-run(npm, [...installArgs, ...toolPackages]);
-if (!isWindows) {
-  // a Windows copy of the same Node version (the program embeds the launcher in a copy of Node);
-  // --force because npm refuses Windows-only packages on other systems
-  run(npm, [...installArgs, "--force", ...toolPackages, `node-win-x64@${nodeVersion}`]);
-}
+run(npm, ["install", "--no-save", "--no-audit", "--no-fund", "--prefix", toolsDir, "esbuild", "@electron/packager"]);
 const bin = name => join(toolsDir, "node_modules", ".bin", isWindows ? `${name}.cmd` : name);
 
-// 1. One file with the launcher and the relay's dependency in it
-const bundle = join(releaseDir, "launcher.cjs");
-run(bin("esbuild"), ["launcher/main.mjs", "--bundle", "--platform=node", "--format=cjs", `--outfile=${bundle}`]);
-
-// 2. Turn it into a blob Node can run from inside itself
-const blob = join(releaseDir, "launcher.blob");
-const seaConfig = join(releaseDir, "sea-config.json");
+// 1. The program's own code (the window, the game server and the relay) in one file
+const appDir = join(releaseDir, "app");
+mkdirSync(appDir, { recursive: true });
+run(bin("esbuild"), [
+  "desktop/main.mjs",
+  "--bundle",
+  "--platform=node",
+  "--format=cjs",
+  "--external:electron",
+  `--outfile=${join(appDir, "main.cjs")}`,
+]);
 writeFileSync(
-  seaConfig,
-  JSON.stringify({ main: bundle, output: blob, disableExperimentalSEAWarning: true, useCodeCache: false }),
+  join(appDir, "package.json"),
+  JSON.stringify({ name: "pokerogue-coop", productName: appName, version: "1.0.0", main: "main.cjs" }, null, 2),
 );
-run(process.execPath, ["--experimental-sea-config", seaConfig]);
 
-// 3. Copy Node for Windows and put the blob inside it
-const exe = join(packageDir, exeName);
-copyFileSync(isWindows ? process.execPath : join(toolsDir, "node_modules", "node-win-x64", "bin", "node.exe"), exe);
-run(bin("postject"), [exe, "NODE_SEA_BLOB", blob, "--sentinel-fuse", "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2"]);
+// 2. Electron for Windows with that code inside it
+const buildDir = join(releaseDir, "build");
+run(bin("electron-packager"), [
+  appDir,
+  appName,
+  "--platform=win32",
+  "--arch=x64",
+  `--out=${buildDir}`,
+  `--electron-version=${electronVersion}`,
+  "--overwrite",
+]);
+const built = readdirSync(buildDir).find(name => name.startsWith(appName));
+if (!built) {
+  console.error("[package] The packager made nothing.");
+  process.exit(1);
+}
+renameSync(join(buildDir, built), packageDir);
 
-// 4. The game beside it, and a note
+// 3. The game beside it (inside the program's resources folder), and a note
 console.log("[package] Copying the game...");
-cpSync(join(root, "dist"), join(packageDir, "game"), { recursive: true });
+cpSync(join(root, "dist"), join(packageDir, "resources", "game"), { recursive: true });
 writeFileSync(
   join(packageDir, "READ ME.txt"),
   [
     "PokeRogue co-op",
     "",
-    `Double-click "${exeName}". A window shows the addresses; the game opens in your browser.`,
+    `Double-click "${exeName}". The game opens in its own window.`,
     "",
     "Host:   in the game choose Co-op > Host, and wait in your lobby.",
+    "        Game menu > Addresses for my friend... shows what to send them.",
     "Friend: run the same program, choose Co-op > Server, type the host's address (for a VPN like Radmin,",
     "        the one starting with 26.), then pick the lobby in the list and press Join.",
-    "        (A friend can also just open http://<host address>:8000/ in a browser, with nothing installed.)",
     "",
-    'Windows may ask to allow the program through the firewall: press "Allow access".',
+    'Windows may ask to allow the program through the firewall: press "Allow access" (the host needs this).',
     "Windows may say the program is from an unknown publisher: More info > Run anyway.",
-    'Keep the "game" folder next to the program. Close the window to stop.',
+    "Press F11 for fullscreen. Close the window to quit.",
     "",
   ].join("\r\n"),
 );
 
-// 5. A zip to send
+// 4. A zip to send
 if (process.argv.includes("--no-zip")) {
   console.log(`[package] Done: ${packageDir}`);
 } else {

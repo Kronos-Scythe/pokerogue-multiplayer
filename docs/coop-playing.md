@@ -34,11 +34,13 @@ that profile had, so make a new profile first if you want to keep the old one.
 pnpm coop:package        # builds the game, then makes release/PokeRogue-Coop and release/PokeRogue-Coop.zip
 ```
 
-The zip (about 600 MB, the game's art and music) holds `PokeRogue Co-op.exe` and a `game` folder. Whoever runs the
-exe gets the game page on port 8000 and the lobby relay on port 8787 in one window, and the browser opens by
-itself. The host picks Co-op > Host; the friend runs the same program, picks Co-op > Server, types the host's
-address, and joins from the list. Windows asks to allow the program through the firewall the first time: press
-Allow. (It may also warn about an unknown publisher: More info > Run anyway.)
+The result (about 1 GB unzipped, the game's art and music) is a normal Windows program: `PokeRogue Co-op.exe` opens
+its own window, not a browser, and runs the lobby relay (port 8787) and the game behind it. Send the whole
+`PokeRogue-Coop` folder (or the zip) to your friend; both of you run the same exe. The host picks Co-op > Host;
+the friend picks Co-op > Server, types the host's address (Game menu > "Addresses for my friend...", it lists the
+Radmin/LAN addresses), and joins from the list. F11 toggles fullscreen. Windows asks to allow the program through
+the firewall the first time: press Allow. (It may also warn about an unknown publisher: More info > Run anyway.)
+Saves live inside the program, under the profile name, so keep using the same exe folder.
 
 The rest of this page covers running the two parts separately and the address options.
 

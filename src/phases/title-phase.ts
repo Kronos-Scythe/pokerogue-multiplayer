@@ -167,7 +167,7 @@ export class TitlePhase extends Phase {
       options.push({
         label: "Profile",
         handler: () => {
-          this.openProfileMenu(() => this.showOptions(lastSessionSlot));
+          this.openProfileMenu();
           return true;
         },
       });
@@ -378,12 +378,9 @@ export class TitlePhase extends Phase {
         coopSession.reset();
         this.openCoopLobby(relay);
       },
-      onProfile: () => this.openProfileMenu(() => this.openCoopLobby(relay)),
+      onProfile: () => this.openProfileMenu(),
       onServer: () => {
         const form: CoopTextFormConfig = {
-          title: "Relay address",
-          label: "Address",
-          confirm: "Connect",
           initial: describeRelayAddress(relay),
           buttonActions: [
             (typed: string) => {
@@ -393,7 +390,7 @@ export class TitlePhase extends Phase {
             () => ui.revertMode(),
           ],
         };
-        ui.setOverlayMode(UiMode.COOP_TEXT, form);
+        ui.setOverlayMode(UiMode.COOP_SERVER, form);
       },
       onBack: () => {
         coopNetwork.disconnect();
@@ -406,10 +403,10 @@ export class TitlePhase extends Phase {
 
   /**
    * The profile screen: who you are playing as, the other profiles saved in this browser, a new profile, and
-   * bringing your progress over from the main game.
-   * @param back - Called to go back to wherever this was opened from
+   * bringing your progress over from the main game. It opens on top of the title screen or the lobby screen
+   * (so closing it goes back to whichever it was opened from).
    */
-  private openProfileMenu(back: () => void): void {
+  private openProfileMenu(): void {
     const { ui } = globalScene;
     const current = this.coopPlayerName();
     const switchTo = (name: string) => {
@@ -426,9 +423,6 @@ export class TitlePhase extends Phase {
       label: "New profile",
       handler: () => {
         const form: CoopTextFormConfig = {
-          title: "New profile",
-          label: "Nickname",
-          confirm: "Create",
           buttonActions: [
             (typed: string) => {
               if (setLocalProfileName(typed, localStorage)) {
@@ -437,33 +431,34 @@ export class TitlePhase extends Phase {
                 ui.playError();
               }
             },
-            () => {
-              ui.revertMode();
-              back();
-            },
+            () => ui.revertMode(),
           ],
         };
-        ui.setOverlayMode(UiMode.COOP_TEXT, form);
+        ui.setOverlayMode(UiMode.COOP_PROFILE, form);
         return true;
       },
+      keepOpen: true,
     });
     options.push({
       label: "Import from the main game",
       handler: () => {
-        this.openImportMenu(back);
+        this.openImportMenu();
         return true;
       },
+      keepOpen: true,
     });
-    options.push({ label: i18next.t("menu:cancel"), handler: () => (back(), true) });
-    ui.setMode(UiMode.OPTION_SELECT, { options, yOffset: 48 } satisfies OptionSelectModeConfig);
+    options.push({ label: i18next.t("menu:cancel"), handler: () => true });
+    ui.setOverlayMode(UiMode.OPTION_SELECT, { options, yOffset: 48 } satisfies OptionSelectModeConfig);
   }
 
   /** Bring progress over from the main game's "Export data" files into the profile in use. */
-  private openImportMenu(back: () => void): void {
+  private openImportMenu(): void {
     const { ui, gameData } = globalScene;
+    // Close this menu, then let the game ask for the file (the file window must open from this very key press)
     const importing =
       (type: GameDataType, slot = 0) =>
       () => {
+        ui.revertMode();
         gameData.importData(type, slot);
         return true;
       };
@@ -473,9 +468,10 @@ export class TitlePhase extends Phase {
       { label: "Pokedex and unlocks (System)", handler: importing(GameDataType.SYSTEM), keepOpen: true },
       { label: "A saved run (into slot 1)", handler: importing(GameDataType.SESSION, 0), keepOpen: true },
       { label: "Run history", handler: importing(GameDataType.RUN_HISTORY), keepOpen: true },
-      { label: i18next.t("menu:cancel"), handler: () => (this.openProfileMenu(back), true) },
+      { label: i18next.t("menu:cancel"), handler: () => true },
     ];
-    ui.setMode(UiMode.OPTION_SELECT, { options, yOffset: 48 } satisfies OptionSelectModeConfig);
+    // a different mode from the profile menu underneath (opening the same mode again would do nothing)
+    ui.setOverlayMode(UiMode.MENU_OPTION_SELECT, { options, yOffset: 48 } satisfies OptionSelectModeConfig);
   }
 
   // TODO: Make callers actually wait for the save slot to load

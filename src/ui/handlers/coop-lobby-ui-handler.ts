@@ -2,7 +2,7 @@ import { globalScene } from "#app/global-scene";
 import { Button } from "#enums/buttons";
 import { TextStyle } from "#enums/text-style";
 import type { CoopLobby } from "#system/coop-network";
-import { addTextObject } from "#ui/text";
+import { addTextObject, getTextColor } from "#ui/text";
 import { UiHandler } from "#ui/ui-handler";
 import { addWindow } from "#ui/ui-theme";
 
@@ -29,6 +29,13 @@ export interface CoopLobbyConfig {
 }
 
 type Focus = "list" | "actions";
+
+/** Text a little smaller than window text (so names and addresses fit), coloured like the given style. */
+function smallText(x: number, y: number, content: string, style: TextStyle): Phaser.GameObjects.Text {
+  return addTextObject(x, y, content, TextStyle.TOOLTIP_CONTENT)
+    .setColor(getTextColor(style))
+    .setShadowColor(getTextColor(style, true));
+}
 
 const ROW_HEIGHT = 13;
 const VISIBLE_ROWS = 7;
@@ -223,19 +230,19 @@ export class CoopLobbyUiHandler extends UiHandler {
     // The corner of the header: a problem, else where we are
     const corner =
       this.status || (this.hostingRoom ? `Lobby ${this.hostingRoom}` : `${this.config.name} @ ${this.config.server}`);
-    this.add(addTextObject(width - 8, 5, corner, TextStyle.WINDOW).setOrigin(1, 0));
+    this.add(smallText(width - 8, 7, corner, TextStyle.WINDOW).setOrigin(1, 0));
 
     // Left panel: the lobbies
-    this.add(addTextObject(8, 26, "Host", TextStyle.SETTINGS_LABEL).setOrigin(0, 0));
-    this.add(addTextObject(164, 26, "Players", TextStyle.SETTINGS_LABEL).setOrigin(1, 0));
+    this.add(smallText(8, 26, "Host", TextStyle.SETTINGS_LABEL).setOrigin(0, 0));
+    this.add(smallText(164, 26, "Players", TextStyle.SETTINGS_LABEL).setOrigin(1, 0));
     if (this.cursor < this.scroll) {
       this.scroll = this.cursor;
     } else if (this.cursor >= this.scroll + VISIBLE_ROWS) {
       this.scroll = this.cursor - VISIBLE_ROWS + 1;
     }
     if (rows.length === 0) {
-      this.add(addTextObject(8, 44, "No lobbies yet.", TextStyle.SETTINGS_LOCKED).setOrigin(0, 0));
-      this.add(addTextObject(8, 57, "Host one and tell your friend!", TextStyle.SETTINGS_LOCKED).setOrigin(0, 0));
+      this.add(smallText(8, 44, "No lobbies yet.", TextStyle.SETTINGS_LOCKED).setOrigin(0, 0));
+      this.add(smallText(8, 57, "Host one and tell your friend!", TextStyle.SETTINGS_LOCKED).setOrigin(0, 0));
     }
     rows.slice(this.scroll, this.scroll + VISIBLE_ROWS).forEach((row, i) => {
       const y = 40 + i * ROW_HEIGHT;
@@ -244,29 +251,29 @@ export class CoopLobbyUiHandler extends UiHandler {
         this.add(globalScene.add.rectangle(6, y - 1, 160, ROW_HEIGHT, 0x7fe9ff, 0.28).setOrigin(0, 0));
       }
       const style = selected ? TextStyle.SETTINGS_SELECTED : TextStyle.WINDOW;
-      this.add(addTextObject(10, y + 1, row.host, style).setOrigin(0, 0));
-      this.add(addTextObject(164, y + 1, row.players, style).setOrigin(1, 0));
+      this.add(smallText(10, y + 2, row.host, style).setOrigin(0, 0));
+      this.add(smallText(164, y + 2, row.players, style).setOrigin(1, 0));
     });
     if (rows.length > VISIBLE_ROWS) {
-      this.add(addTextObject(164, 128, `${this.cursor + 1}/${rows.length}`, TextStyle.SETTINGS_LOCKED).setOrigin(1, 0));
+      this.add(smallText(164, 128, `${this.cursor + 1}/${rows.length}`, TextStyle.SETTINGS_LOCKED).setOrigin(1, 0));
     }
 
     // Right panel: who is sitting where in the selected lobby
     const seatsOf = this.getSeats();
     if (seatsOf) {
-      this.add(addTextObject(182, 26, seatsOf.host, TextStyle.WINDOW).setOrigin(0, 0));
-      this.add(addTextObject(182, 40, "2P co-op", TextStyle.SETTINGS_LABEL).setOrigin(0, 0));
+      this.add(smallText(182, 26, seatsOf.host, TextStyle.WINDOW).setOrigin(0, 0));
+      this.add(smallText(182, 40, "2P co-op", TextStyle.SETTINGS_LABEL).setOrigin(0, 0));
       seatsOf.seats.forEach((seat, i) => {
         const y = 58 + i * 15;
-        this.add(addTextObject(182, y, `P${i + 1}`, TextStyle.SETTINGS_LABEL).setOrigin(0, 0));
+        this.add(smallText(182, y, `P${i + 1}`, TextStyle.SETTINGS_LABEL).setOrigin(0, 0));
         this.add(
-          addTextObject(202, y, seat.name, seat.open ? TextStyle.SETTINGS_LOCKED : TextStyle.WINDOW).setOrigin(0, 0),
+          smallText(202, y, seat.name, seat.open ? TextStyle.SETTINGS_LOCKED : TextStyle.WINDOW).setOrigin(0, 0),
         );
         if (seat.tag) {
-          this.add(addTextObject(width - 8, y, seat.tag, TextStyle.SETTINGS_LABEL).setOrigin(1, 0));
+          this.add(smallText(width - 8, y, seat.tag, TextStyle.SETTINGS_LABEL).setOrigin(1, 0));
         }
       });
-      this.add(addTextObject(182, 112, seatsOf.note, TextStyle.SETTINGS_LABEL).setOrigin(0, 0));
+      this.add(smallText(182, 112, seatsOf.note, TextStyle.SETTINGS_LABEL).setOrigin(0, 0));
     }
 
     // Bottom: what you can do
@@ -281,22 +288,20 @@ export class CoopLobbyUiHandler extends UiHandler {
         this.add(globalScene.add.rectangle(x + 1, 143, w - 2, 20, 0x7fe9ff, 0.28).setOrigin(0, 0));
       }
       this.add(
-        addTextObject(
-          x + w / 2,
-          148,
-          action.label,
-          selected ? TextStyle.SETTINGS_SELECTED : TextStyle.WINDOW,
-        ).setOrigin(0.5, 0),
+        smallText(x + w / 2, 150, action.label, selected ? TextStyle.SETTINGS_SELECTED : TextStyle.WINDOW).setOrigin(
+          0.5,
+          0,
+        ),
       );
     });
     this.add(
       addTextObject(
         width / 2,
-        168,
+        169,
         this.hostingRoom
           ? `Your friend can now pick your lobby in their list (room ${this.hostingRoom}).`
-          : "Up/Down: lobbies   Left/Right: buttons   Confirm: join/select   Back: leave",
-        TextStyle.SETTINGS_LABEL,
+          : "Up/Down: lobbies    Left/Right: buttons    Confirm: select    Back: leave",
+        TextStyle.INSTRUCTIONS_TEXT,
       ).setOrigin(0.5, 0),
     );
   }
