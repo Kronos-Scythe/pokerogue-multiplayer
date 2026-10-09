@@ -104,6 +104,20 @@ describe("Co-op lobby screen", () => {
     expect(calls).toEqual(["cancel-host"]);
   });
 
+  it("goes back to the list in place when the hosted lobby is cancelled", async () => {
+    await open();
+    handler().setHosting("ZZZZ");
+    handler().stopHosting();
+    expect(handler().getView().hosting).toBe(false);
+    expect(handler().getView().actions).toContain("Host");
+  });
+
+  it("starts over in place with a new configuration (new server address)", async () => {
+    await open();
+    handler().reconfigure({ ...(game.scene.ui.getHandler() as any).config, server: "other:1" });
+    expect(handler().getView().actions).toContain("Host");
+  });
+
   it("copes with a relay that cannot be reached", async () => {
     const list = vi.fn().mockRejectedValue(new Error("Could not reach the relay server."));
     await open(list);

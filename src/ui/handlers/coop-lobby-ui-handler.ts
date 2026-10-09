@@ -87,6 +87,9 @@ export class CoopLobbyUiHandler extends UiHandler {
       return false;
     }
     super.show(args);
+    if (this.timer) {
+      clearInterval(this.timer);
+    }
     this.config = config;
     this.lobbies = [];
     this.status = "";
@@ -100,6 +103,11 @@ export class CoopLobbyUiHandler extends UiHandler {
     void this.refresh();
     this.timer = setInterval(() => void this.refresh(), REFRESH_MS);
     return true;
+  }
+
+  /** Start over with a new configuration while the screen is open (for example after the server address changed). */
+  public reconfigure(config: CoopLobbyConfig): void {
+    this.show([config]);
   }
 
   clear(): void {
@@ -151,6 +159,19 @@ export class CoopLobbyUiHandler extends UiHandler {
     this.status = "";
     if (this.active) {
       this.render();
+    }
+  }
+
+  /** Stop showing "hosting" and go back to the list of lobbies (the screen is already open, so it is reset in place). */
+  public stopHosting(): void {
+    this.hostingRoom = null;
+    this.focus = "list";
+    this.cursor = 0;
+    this.actionCursor = 0;
+    this.status = "";
+    if (this.active) {
+      this.render();
+      void this.refresh();
     }
   }
 

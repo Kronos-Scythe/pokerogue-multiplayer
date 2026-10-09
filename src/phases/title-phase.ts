@@ -169,6 +169,7 @@ export class TitlePhase extends Phase {
           this.openProfileMenu();
           return true;
         },
+        keepOpen: true,
       });
     }
     options.push(
@@ -343,7 +344,9 @@ export class TitlePhase extends Phase {
     const page = window.location;
     const relay = server ?? getCoopTitleConfigs(page.search, page)[0].server;
     const lobby = () => ui.getHandler() as CoopLobbyUiHandler;
+    let cancelled = false;
     const connect = (role: "host" | "join", room?: string) => {
+      cancelled = false;
       this.setupCoopHandlers();
       coopNetwork.onStatus = null;
       coopNetwork.onHosted = code => lobby().setHosting(code);
@@ -360,6 +363,9 @@ export class TitlePhase extends Phase {
         .catch((err: Error) => {
           coopNetwork.onHosted = null;
           coopSession.reset();
+          if (cancelled) {
+            return;
+          }
           if (ui.mode === UiMode.COOP_LOBBY) {
             lobby().setHosting(null);
             lobby().setStatus(err.message);
@@ -373,9 +379,12 @@ export class TitlePhase extends Phase {
       onHost: () => connect("host"),
       onJoin: room => connect("join", room),
       onCancelHost: () => {
+        cancelled = true;
+        coopNetwork.onHosted = null;
         coopNetwork.disconnect();
         coopSession.reset();
-        this.openCoopLobby(relay);
+        // the lobby screen is already showing, and opening the same screen again does nothing: reset it in place
+        lobby().stopHosting();
       },
       onProfile: () => this.openProfileMenu(),
       onServer: () => {
@@ -397,7 +406,12 @@ export class TitlePhase extends Phase {
         super.end();
       },
     };
-    ui.setMode(UiMode.COOP_LOBBY, config);
+    if (ui.mode === UiMode.COOP_LOBBY) {
+      // already on this screen (a new server address was typed): opening it again does nothing, so reset it in place
+      lobby().reconfigure(config);
+    } else {
+      ui.setMode(UiMode.COOP_LOBBY, config);
+    }
   }
 
   /**
@@ -439,36 +453,26 @@ export class TitlePhase extends Phase {
       keepOpen: true,
     });
     options.push({
+      // The game works out what the exported file holds (system data, a run, history), so there is nothing to choose
       label: "Import from the main game",
       handler: () => {
-        this.openImportMenu();
+        // close this menu, then let the game ask for the file (the file window must open from this very key press)
+        void ui.revertMode();
+        globalScene.gameData.importData(undefined, 0);
         return true;
       },
       keepOpen: true,
     });
-    options.push({ label: i18next.t("menu:cancel"), handler: () => true });
-    ui.setOverlayMode(UiMode.OPTION_SELECT, { options, yOffset: 48 } satisfies OptionSelectModeConfig);
-  }
-
-  /** Bring progress over from the main game's "Export data" files into the profile in use. */
-  private openImportMenu(): void {
-    const { ui, gameData } = globalScene;
-    // Close this menu, then let the game ask for the file (the file window must open from this very key press)
-    // The game works out what the file holds (system, run, history), so there is nothing to choose
-    const options: OptionSelectItem[] = [
-      { label: "Main game > Menu > Manage Data > Export", handler: () => false, keepOpen: true },
-      {
-        label: "Choose the exported file...",
-        handler: () => {
-          ui.revertMode();
-          gameData.importData(undefined, 0);
-          return true;
-        },
-        keepOpen: true,
+    options.push({
+      label: i18next.t("menu:cancel"),
+      handler: () => {
+        // a menu opened over another screen has to give the screen back itself
+        void ui.revertMode();
+        return true;
       },
-      { label: i18next.t("menu:cancel"), handler: () => true },
-    ];
-    // a different mode from the profile menu underneath (opening the same mode again would do nothing)
+      keepOpen: true,
+    });
+    // not OPTION_SELECT: the title menu underneath already is that, and opening the same screen again does nothing
     ui.setOverlayMode(UiMode.MENU_OPTION_SELECT, { options, yOffset: 48 } satisfies OptionSelectModeConfig);
   }
 
