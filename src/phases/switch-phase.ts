@@ -76,18 +76,42 @@ export class SwitchPhase extends BattlePhase {
         ? this.fieldIndex
         : 0;
 
+    /** Bring the chosen party member in (only from the team that owns the slot) */
+    const applySwitch = (slotIndex: number, option?: PartyOption) => {
+      const incoming = globalScene.getPlayerParty()[slotIndex];
+      const ownTeam =
+        !coopSession.enabled || (incoming != null && slotPokemon != null && sameSeat(incoming, slotPokemon));
+      if (slotIndex >= globalScene.currentBattle.getBattlerCount() && slotIndex < 6 && ownTeam) {
+        const switchType = option === PartyOption.PASS_BATON ? SwitchType.BATON_PASS : this.switchType;
+        globalScene.phaseManager.unshiftNew("SwitchSummonPhase", switchType, fieldIndex, slotIndex, this.doReturn);
+      }
+    };
+
+    // Co-op: only the player who owns the fainted Pokemon picks the replacement; the other screen waits for the answer
+    if (
+      coopSession.enabled
+      && !coopSession.hotseat
+      && slotPokemon != null
+      && !coopSession.controls(slotPokemon.owner)
+    ) {
+      globalScene.ui.showText("Your partner is choosing their next Pokémon...", 0);
+      coopSession.awaitChoice().then(({ slot }) => {
+        applySwitch(slot);
+        globalScene.ui.clearText();
+        globalScene.ui.setMode(UiMode.MESSAGE).then(() => super.end());
+      });
+      return;
+    }
+
     globalScene.ui.setMode(
       UiMode.PARTY,
       this.isModal ? PartyUiMode.FAINT_SWITCH : PartyUiMode.POST_BATTLE_SWITCH,
       fieldIndex,
       (slotIndex: number, option: PartyOption) => {
-        const incoming = globalScene.getPlayerParty()[slotIndex];
-        const ownTeam =
-          !coopSession.enabled || (incoming != null && slotPokemon != null && sameSeat(incoming, slotPokemon));
-        if (slotIndex >= globalScene.currentBattle.getBattlerCount() && slotIndex < 6 && ownTeam) {
-          const switchType = option === PartyOption.PASS_BATON ? SwitchType.BATON_PASS : this.switchType;
-          globalScene.phaseManager.unshiftNew("SwitchSummonPhase", switchType, fieldIndex, slotIndex, this.doReturn);
+        if (coopSession.enabled && !coopSession.hotseat) {
+          coopSession.sendChoice?.({ slot: slotIndex });
         }
+        applySwitch(slotIndex, option);
         globalScene.ui.setMode(UiMode.MESSAGE).then(() => super.end());
       },
       PartyUiHandler.FilterNonFainted,

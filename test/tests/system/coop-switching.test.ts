@@ -133,6 +133,21 @@ describe("Co-op switching and wipes", () => {
     });
   });
 
+  describe("when the partner's Pokemon faints", () => {
+    it("waits for the partner's answer instead of asking this player", async () => {
+      await enemyKnocksOutSlotZero();
+      // from here on this screen belongs to seat 1; slot 0 belongs to seat 0 (the partner)
+      coopSession.hotseat = false;
+      coopSession.localSeat = 1;
+      await game.phaseInterceptor.to("SwitchPhase", false);
+      expect(game.scene.ui.mode).not.toBe(UiMode.PARTY);
+
+      coopSession.receiveChoice({ slot: CHARMANDER });
+      await game.toNextTurn();
+      expect(speciesAt(0)).toBe(SpeciesId.CHARMANDER);
+    });
+  });
+
   describe("a wiped team", () => {
     beforeEach(() => {
       // seat 0's bench is already down; its lead is about to go as well

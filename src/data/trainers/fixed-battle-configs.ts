@@ -1,4 +1,5 @@
 import { FixedBattleConfig, getRandomTrainerFunc } from "#app/battle";
+import { globalScene } from "#app/global-scene";
 import { settings } from "#app/global-settings-manager";
 import { BattleType } from "#enums/battle-type";
 import { ClassicFixedBossWaves } from "#enums/fixed-boss-waves";
@@ -6,7 +7,24 @@ import { ModifierTier } from "#enums/modifier-tier";
 import { TrainerType } from "#enums/trainer-type";
 import { TrainerVariant } from "#enums/trainer-variant";
 import { Trainer } from "#field/trainer";
+import { coopSession } from "#system/coop-session";
 import { randSeedInt } from "#utils/common";
+
+/**
+ * Which rival (boy or girl) the run has. Alone, it is the opposite of the player's character. In co-op the two
+ * players may have chosen different characters, so the rival comes from the shared run seed instead and is the
+ * same on both screens (and for every rival fight of the run).
+ */
+function rivalVariant(): TrainerVariant {
+  if (coopSession.enabled) {
+    let sum = 0;
+    for (const char of globalScene.seed ?? "") {
+      sum += char.charCodeAt(0);
+    }
+    return sum % 2 === 0 ? TrainerVariant.FEMALE : TrainerVariant.DEFAULT;
+  }
+  return settings.isPlayerFemale ? TrainerVariant.DEFAULT : TrainerVariant.FEMALE;
+}
 
 export interface FixedBattleConfigs {
   [key: number]: FixedBattleConfig;
@@ -28,14 +46,10 @@ export const classicFixedBattles: FixedBattleConfigs = {
     ),
   [ClassicFixedBossWaves.RIVAL_1]: new FixedBattleConfig()
     .setBattleType(BattleType.TRAINER)
-    .setGetTrainerFunc(
-      () => new Trainer(TrainerType.RIVAL, settings.isPlayerFemale ? TrainerVariant.DEFAULT : TrainerVariant.FEMALE),
-    ),
+    .setGetTrainerFunc(() => new Trainer(TrainerType.RIVAL, rivalVariant())),
   [ClassicFixedBossWaves.RIVAL_2]: new FixedBattleConfig()
     .setBattleType(BattleType.TRAINER)
-    .setGetTrainerFunc(
-      () => new Trainer(TrainerType.RIVAL_2, settings.isPlayerFemale ? TrainerVariant.DEFAULT : TrainerVariant.FEMALE),
-    )
+    .setGetTrainerFunc(() => new Trainer(TrainerType.RIVAL_2, rivalVariant()))
     .setCustomModifierRewards({
       guaranteedModifierTiers: [ModifierTier.ULTRA, ModifierTier.GREAT, ModifierTier.GREAT],
       allowLuckUpgrades: false,
@@ -61,9 +75,7 @@ export const classicFixedBattles: FixedBattleConfigs = {
     ),
   [ClassicFixedBossWaves.RIVAL_3]: new FixedBattleConfig()
     .setBattleType(BattleType.TRAINER)
-    .setGetTrainerFunc(
-      () => new Trainer(TrainerType.RIVAL_3, settings.isPlayerFemale ? TrainerVariant.DEFAULT : TrainerVariant.FEMALE),
-    )
+    .setGetTrainerFunc(() => new Trainer(TrainerType.RIVAL_3, rivalVariant()))
     .setCustomModifierRewards({
       guaranteedModifierTiers: [ModifierTier.ULTRA, ModifierTier.ULTRA, ModifierTier.GREAT, ModifierTier.GREAT],
       allowLuckUpgrades: false,
@@ -130,9 +142,7 @@ export const classicFixedBattles: FixedBattleConfigs = {
     ),
   [ClassicFixedBossWaves.RIVAL_4]: new FixedBattleConfig()
     .setBattleType(BattleType.TRAINER)
-    .setGetTrainerFunc(
-      () => new Trainer(TrainerType.RIVAL_4, settings.isPlayerFemale ? TrainerVariant.DEFAULT : TrainerVariant.FEMALE),
-    )
+    .setGetTrainerFunc(() => new Trainer(TrainerType.RIVAL_4, rivalVariant()))
     .setCustomModifierRewards({
       guaranteedModifierTiers: [ModifierTier.ULTRA, ModifierTier.ULTRA, ModifierTier.ULTRA, ModifierTier.ULTRA],
       allowLuckUpgrades: false,
@@ -207,9 +217,7 @@ export const classicFixedBattles: FixedBattleConfigs = {
     }),
   [ClassicFixedBossWaves.RIVAL_5]: new FixedBattleConfig()
     .setBattleType(BattleType.TRAINER)
-    .setGetTrainerFunc(
-      () => new Trainer(TrainerType.RIVAL_5, settings.isPlayerFemale ? TrainerVariant.DEFAULT : TrainerVariant.FEMALE),
-    )
+    .setGetTrainerFunc(() => new Trainer(TrainerType.RIVAL_5, rivalVariant()))
     .setCustomModifierRewards({
       guaranteedModifierTiers: [
         ModifierTier.ROGUE,
@@ -355,9 +363,7 @@ export const classicFixedBattles: FixedBattleConfigs = {
     ),
   [ClassicFixedBossWaves.RIVAL_6]: new FixedBattleConfig()
     .setBattleType(BattleType.TRAINER)
-    .setGetTrainerFunc(
-      () => new Trainer(TrainerType.RIVAL_6, settings.isPlayerFemale ? TrainerVariant.DEFAULT : TrainerVariant.FEMALE),
-    )
+    .setGetTrainerFunc(() => new Trainer(TrainerType.RIVAL_6, rivalVariant()))
     .setCustomModifierRewards({
       guaranteedModifierTiers: [
         ModifierTier.ROGUE,
