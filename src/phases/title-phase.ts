@@ -12,7 +12,6 @@ import { getDailyRunStarters, startDailyEventChallenges } from "#data/daily-run"
 import { modifierTypes } from "#data/data-lists";
 import { Gender } from "#data/gender";
 import { BattleType } from "#enums/battle-type";
-import { GameDataType } from "#enums/game-data-type";
 import { GameModes } from "#enums/game-modes";
 import { ModifierPoolType } from "#enums/modifier-pool-type";
 import { UiMode } from "#enums/ui-mode";
@@ -455,19 +454,18 @@ export class TitlePhase extends Phase {
   private openImportMenu(): void {
     const { ui, gameData } = globalScene;
     // Close this menu, then let the game ask for the file (the file window must open from this very key press)
-    const importing =
-      (type: GameDataType, slot = 0) =>
-      () => {
-        ui.revertMode();
-        gameData.importData(type, slot);
-        return true;
-      };
+    // The game works out what the file holds (system, run, history), so there is nothing to choose
     const options: OptionSelectItem[] = [
-      // Where the file comes from, since that is the part nobody can guess
       { label: "Main game > Menu > Manage Data > Export", handler: () => false, keepOpen: true },
-      { label: "Pokedex and unlocks (System)", handler: importing(GameDataType.SYSTEM), keepOpen: true },
-      { label: "A saved run (into slot 1)", handler: importing(GameDataType.SESSION, 0), keepOpen: true },
-      { label: "Run history", handler: importing(GameDataType.RUN_HISTORY), keepOpen: true },
+      {
+        label: "Choose the exported file...",
+        handler: () => {
+          ui.revertMode();
+          gameData.importData(undefined, 0);
+          return true;
+        },
+        keepOpen: true,
+      },
       { label: i18next.t("menu:cancel"), handler: () => true },
     ];
     // a different mode from the profile menu underneath (opening the same mode again would do nothing)

@@ -1322,8 +1322,34 @@ export class GameData {
   }
 
   // TODO: Refactor this spaghetti monster
-  public importData(dataType: GameDataType, slotId = 0, confirmWindowXOffset?: number): void {
-    const dataKey = `${getDataTypeKey(dataType, slotId)}_${loggedInUser?.username}`;
+  /** Guess what an exported (already decrypted) file holds from the fields it has. */
+  private detectDataType(dataStr: string): GameDataType {
+    try {
+      const data = JSON.parse(dataStr);
+      if (data && typeof data === "object") {
+        if ("party" in data && "enemyParty" in data) {
+          return GameDataType.SESSION;
+        }
+        if ("dexData" in data) {
+          return GameDataType.SYSTEM;
+        }
+        const entries = Object.values(data) as any[];
+        if (entries.length > 0 && entries.every(v => v && typeof v === "object" && "isVictory" in v)) {
+          return GameDataType.RUN_HISTORY;
+        }
+      }
+    } catch {
+      // not readable: the check in the import reports it
+    }
+    return GameDataType.SYSTEM;
+  }
+
+  /**
+   * Ask for an exported file and import it.
+   * @param requestedType - What the file holds; when left out, it is worked out from the file's contents
+   */
+  public importData(requestedType: GameDataType | undefined, slotId = 0, confirmWindowXOffset?: number): void {
+    let dataType = requestedType ?? GameDataType.SYSTEM;
 
     document.getElementById("saveFile")?.remove();
 
@@ -1395,15 +1421,20 @@ export class GameData {
       reader.onload = (_ => {
         return e => {
           let valid = false;
-          const dataName = i18next.t(`gameData:${toCamelCase(GameDataType[dataType])}`);
           const saveData = e.target?.result?.toString() ?? "";
 
-          let dataStr: string;
-          if (isValidJSON(saveData)) {
-            dataStr = saveData;
-          } else {
-            dataStr = AES.decrypt(saveData, saveKey).toString(enc.Utf8);
+          let dataStr = "";
+          try {
+            dataStr = isValidJSON(saveData) ? saveData : AES.decrypt(saveData, saveKey).toString(enc.Utf8);
+          } catch (ex) {
+            console.error(ex);
           }
+
+          if (requestedType === undefined) {
+            dataType = this.detectDataType(dataStr);
+          }
+          const dataKey = `${getDataTypeKey(dataType, slotId)}_${loggedInUser?.username}`;
+          const dataName = i18next.t(`gameData:${toCamelCase(GameDataType[dataType])}`);
 
           try {
             switch (dataType) {
